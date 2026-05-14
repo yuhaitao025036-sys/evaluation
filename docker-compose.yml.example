@@ -1,0 +1,69 @@
+# DUCC Evaluation System - Docker Compose (示例配置)
+# 
+# ⚠️ 重要：这是示例配置文件，请勿直接使用！
+# 
+# 使用步骤：
+#   1. 复制此文件: cp docker-compose.yml.example docker-compose.yml
+#   2. 生成安全密码: openssl rand -base64 32
+#   3. 在 docker-compose.yml 中替换 YOUR_SECURE_PASSWORD_HERE 为生成的密码
+#   4. docker-compose.yml 已被 .gitignore 保护，不会提交到 Git
+#
+# 架构说明：
+# - PostgreSQL 和 Redis 运行在 Docker 容器中（数据隔离）
+# - Backend API 和 Worker 运行在宿主机上（方便开发和调试）
+# - 评估任务由 Worker 在宿主机上调用 Docker 执行（避免 Docker in Docker）
+#
+# 数据存储：
+# - 数据持久化到宿主机目录: /home/dejavu/docker-data/
+# - PostgreSQL: /home/dejavu/docker-data/postgres/data
+# - Redis: /home/dejavu/docker-data/redis/data
+#
+# 启动方式：
+#   1. 初始化数据目录: ./scripts/init-docker-data.sh
+#   2. 启动数据库服务: docker-compose up -d
+#   3. 启动后端服务: cd backend && ./start_backend.sh
+#   4. 启动 Worker: cd backend && ./start_worker.sh
+
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: eval_postgres
+    environment:
+      POSTGRES_DB: ducc_evaluation
+      POSTGRES_USER: ducc_user
+      # ⚠️ 请替换为你自己生成的安全密码（使用 openssl rand -base64 32 生成）
+      POSTGRES_PASSWORD: YOUR_SECURE_PASSWORD_HERE
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      # 数据持久化到宿主机绝对路径（便于访问和备份）
+      # ⚠️ 根据你的实际环境修改此路径
+      - /home/dejavu/docker-data/postgres/data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ducc_user -d ducc_evaluation"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: eval_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      # 数据持久化到宿主机绝对路径
+      # ⚠️ 根据你的实际环境修改此路径
+      - /home/dejavu/docker-data/redis/data:/data
+    command: redis-server --appendonly yes --appendfsync everysec --maxmemory 512mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped

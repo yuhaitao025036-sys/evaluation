@@ -80,11 +80,75 @@ evaluation/
 │   └── outputs/         # 任务输出
 │
 ├── docs/                # 文档
-│   ├── DEPLOYMENT.md    # 部署指南
-│   └── API.md           # API 文档
+│   ├── design/          # 系统设计文档（开发用）
+│   └── user-guide/      # 使用文档（用户用）
+│
+├── .agents/rules/       # 接口规范（添加脚本/数据集必读）
 │
 └── docker-compose.yml   # Docker Compose 配置
 ```
+
+## 🔒 安全配置
+
+⚠️ **首次使用必读**：项目包含敏感配置文件，请按以下步骤配置：
+
+### 首次配置步骤
+
+1. **复制配置文件模板**
+   ```bash
+   # 复制 Docker Compose 配置
+   cp docker-compose.yml.example docker-compose.yml
+   
+   # 复制后端配置
+   cp backend/app/config.py.example backend/app/config.py
+   ```
+
+2. **生成安全密码**
+   ```bash
+   # 使用 openssl 生成强密码（推荐）
+   openssl rand -base64 32
+   ```
+
+3. **更新配置文件**
+   
+   在以下文件中将 `YOUR_SECURE_PASSWORD_HERE` 替换为生成的密码：
+   - `docker-compose.yml` (第 39 行：`POSTGRES_PASSWORD`)
+   - `backend/app/config.py` (第 17 行：`DATABASE_URL`)
+
+4. **设置文件权限**
+   ```bash
+   chmod 600 docker-compose.yml
+   chmod 600 backend/app/config.py
+   ```
+
+### 安全说明
+
+- ✅ **`.gitignore` 保护**：包含真实密码的文件已被 `.gitignore` 忽略，不会提交到 Git
+- ✅ **示例文件**：`.example` 后缀的文件使用占位符，可以安全提交
+- ✅ **密码强度**：建议使用 24 位以上随机字符
+- ⚠️ **不要在文档中记录真实密码**
+
+### Git 安全检查
+
+提交前务必验证：
+
+```bash
+# 检查哪些文件会被忽略
+git status --ignored
+
+# 验证敏感文件已被忽略
+git check-ignore docker-compose.yml
+git check-ignore backend/app/config.py
+
+# 查看即将提交的文件
+git status
+```
+
+**预期结果**：包含真实密码的文件不应出现在待提交列表中。
+
+更多详情请参考：[数据库密码配置说明](docs/DATABASE_PASSWORD.md)
+
+---
 
 ## 🚀 快速开始
 
@@ -129,7 +193,6 @@ cd backend
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
 ```
 
 **第三步：初始化数据库**
@@ -183,12 +246,76 @@ cd backend && ./start_worker.sh
 # 重新连接: tmux attach -t ducc
 ```
 
-## 📖 详细文档
+## 📖 文档导航
 
-- **[安装指南](docs/INSTALLATION.md)** - 详细的安装步骤和系统配置
-- **[API 测试指南](docs/API_TESTING.md)** - 完整的 API 使用示例和工作流
-- **[部署文档](docs/DEPLOYMENT.md)** - 生产环境部署说明
-- **[后端实现总结](docs/BACKEND_SUMMARY.md)** - 技术架构和功能清单
+**完整文档中心**: [docs/README.md](docs/README.md) 📚
+
+---
+
+### 📚 接口规范（添加脚本/数据集必读）
+
+**位置**: [`.agents/rules/`](.agents/rules/)
+
+这些是**强制规范**，所有评估脚本和数据集必须遵循：
+
+- **[脚本接口规范 v2.0](.agents/rules/script-interface.md)** ⚡️ - 脚本必须支持的参数和输出
+  - 必需参数：`--instance-id`, `--output-dir`, `--model`, `--tag`
+  - 单任务执行模式（系统负责调度）
+  - [v2.0 变更说明](docs/design/SCRIPT_INTERFACE_V2_CHANGELOG.md)
+- **[数据集格式规范](.agents/rules/dataset-format.md)** - 数据集文件格式要求
+- **[输出结构规范](.agents/rules/output-structure.md)** - 脚本输出目录结构标准
+- **[对比功能要求](.agents/rules/comparison-requirements.md)** - 启用对比功能的额外要求
+
+📖 完整说明：[.agents/rules/README.md](.agents/rules/README.md)
+
+---
+
+### 🏗️ 设计文档（开发系统功能）
+
+**位置**: [`docs/design/`](docs/design/)
+
+这些是**架构设计**，供开发系统功能时参考：
+
+- **[简化数据模型](docs/design/simplified-data-model.md)** ⭐️⭐️ - 三层数据架构（数据→批次→结果）
+- **[任务调度与并发控制](docs/design/task-scheduling-and-concurrency.md)** ⭐️⭐️ - 系统级任务调度机制
+- **[批次管理机制](docs/design/batch-management.md)** - 批次创建、追加和统计
+- **[后端实现总结](docs/design/BACKEND_SUMMARY.md)** - 技术架构和功能清单
+- **[开发指南](docs/design/DEVELOPMENT.md)** - 开发流程和规范
+
+📖 完整说明：[docs/design/README.md](docs/design/README.md)
+
+---
+
+### 📘 使用文档（用户操作指南）
+
+**位置**: [`docs/user-guide/`](docs/user-guide/)
+
+这些是**使用指南**，面向系统使用者：
+
+- **[安装指南](docs/user-guide/INSTALLATION.md)** - 详细的安装步骤和系统配置
+- **[API 测试指南](docs/user-guide/API_TESTING.md)** - 完整的 API 使用示例和工作流
+- **[部署文档](docs/user-guide/DEPLOYMENT.md)** - 生产环境部署说明
+- **[备份设置](docs/user-guide/BACKUP_CRON_SETUP.md)** - 数据库备份配置
+
+📖 完整说明：[docs/user-guide/README.md](docs/user-guide/README.md)
+
+---
+
+### 🔧 环境配置
+
+**位置**: [`docs/setup/`](docs/setup/)
+
+- **[数据库密码配置](docs/setup/DATABASE_PASSWORD.md)** - 密码安全配置
+- **[Conda 环境配置](docs/setup/CONDA_SETUP.md)** - Conda 环境管理
+
+📖 完整说明：[docs/setup/README.md](docs/setup/README.md)
+
+---
+
+### 🔧 示例代码
+
+- **[示例脚本模板](data/scripts/example_script.py)** - 完整的 v2.0 评估脚本模板
+- **[SWE-Bench 适配器](data/scripts/ducc_swebench_adapter.py)** - 现有脚本适配示例
 
 ## 🔍 快速验证
 
@@ -210,39 +337,113 @@ curl http://localhost:8000/api/v1/models
 
 ## 💡 使用示例
 
-### 创建任务组
+### 准备阶段
+
+#### 1. 编写评估脚本
+
+参考 [脚本接口规范 v2.0](.agents/rules/script-interface.md) 和 [示例脚本](data/scripts/example_script.py) 编写你的评估脚本：
+
+```bash
+# 复制示例脚本作为模板
+cp data/scripts/example_script.py data/scripts/my_evaluation.py
+
+# 或者适配现有脚本
+cp data/scripts/ducc_swebench_adapter.py data/scripts/my_adapter.py
+```
+
+**脚本必须遵守的规则** ([详见规范](.agents/rules/script-interface.md))：
+- ✅ 支持必需参数：`--instance-id`, `--output-dir`, `--model`, `--tag`
+- ✅ 只处理单个实例（不循环）
+- ✅ 输出 `task_summary.json` 到 `<output-dir>/`
+- 📝 推荐输出：`extracted_patch.diff`, `execution_trace.jsonl`
+- 🔄 迁移指南：[v1.0 → v2.0 变更说明](docs/design/SCRIPT_INTERFACE_V2_CHANGELOG.md)
+
+#### 2. 准备数据集
+
+参考 [数据集格式规范](.agents/rules/dataset-format.md) 准备数据集：
+
+```bash
+# 复制数据集到 datasets 目录
+cp my_dataset.parquet data/datasets/
+```
+
+**数据集必须遵守的规则** ([详见规范](.agents/rules/dataset-format.md))：
+- ✅ 必需字段：`instance_id`
+- 📝 推荐字段：`patch`, `problem_statement`, `repo`, `base_commit`
+
+### 运行任务
+
+#### 3. 创建任务组
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/task-groups \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Python Baseline - GPT-4",
+    "batch_name": "baseline",
     "dataset_id": 1,
     "script_id": 1,
     "model": "gpt-4-turbo",
     "tag": "baseline",
     "concurrency": 10,
+    "start_index": 0,
+    "end_index": 100,
     "filter_conditions": {
       "repo_language": "python"
     }
   }'
 ```
 
+**批次说明**：
+- `batch_name`: 批次名称，用于聚合统计（如 baseline, experiment_1）
+- 同一批次的多次运行会被聚合在一起计算正确率
+- 详见：[批次管理机制](.agents/rules/batch-management.md)
+
+#### 3.2 追加数据到现有批次
+
+```bash
+# 追加更多数据到 baseline 批次
+curl -X POST http://localhost:8000/api/v1/task-groups \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Python Baseline - GPT-4 (Run 2)",
+    "batch_name": "baseline",
+    "append_to_batch": true,
+    "dataset_id": 1,
+    "script_id": 1,
+    "model": "gpt-4-turbo",
+    "tag": "baseline",
+    "concurrency": 10,
+    "start_index": 100,
+    "end_index": 200
+  }'
+```
+
+**注意**：
+- ✅ 追加时 `model` 和 `tag` 必须与批次一致
+- ✅ 支持动态追加，实时更新批次统计
+- 📊 批次会自动聚合所有追加的数据计算正确率
+
 ### 启动任务
+
+#### 4. 启动任务组
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/task-groups/1/start
 ```
 
-### 查看进度
+#### 5. 查看进度
 
 ```bash
 curl http://localhost:8000/api/v1/task-groups/1/progress
 ```
 
-### 对比结果
+#### 6. 对比结果
+
+对比不同模型或配置的结果，详见 [对比功能要求](.agents/rules/comparison-requirements.md)：
 
 ```bash
+# 跨模型对比
 curl -X POST http://localhost:8000/api/v1/comparisons/compare-by-models \
   -H "Content-Type: application/json" \
   -d '{
@@ -250,7 +451,24 @@ curl -X POST http://localhost:8000/api/v1/comparisons/compare-by-models \
     "tag": "baseline",
     "dataset_id": 1
   }'
+
+# 跨标签对比（同一模型的不同配置）
+curl -X POST http://localhost:8000/api/v1/comparisons/compare-by-tags \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-4-turbo",
+    "tags": ["baseline", "experiment_new_prompt"],
+    "dataset_id": 1
+  }'
 ```
+
+**支持的对比维度**：
+- 🔄 跨模型对比（GPT-4 vs Claude）
+- 🏷️ 跨标签对比（baseline vs experiment）
+- 📊 三向对比（Ground Truth vs 生成 vs 原始代码）
+- 📈 执行轨迹对比（时间、操作序列、资源消耗）
+
+详见：[对比功能要求](.agents/rules/comparison-requirements.md)
 
 完整工作流请参考 [API 测试指南](docs/API_TESTING.md)。
 
