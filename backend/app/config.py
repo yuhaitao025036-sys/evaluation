@@ -39,10 +39,16 @@ class Settings(BaseSettings):
     
     # CORS
     CORS_ORIGINS: list = ["http://localhost:3000", "http://localhost:5173"]
-    
+
+    # Worker
+    API_PORT: int = 8000
+    WORKER_ID: str = "worker-1"
+    RQ_QUEUE_NAME: str = "ducc_tasks"
+
     class Config:
         env_file = ".env"
         case_sensitive = True
+        extra = "ignore"
 
 
 settings = Settings()

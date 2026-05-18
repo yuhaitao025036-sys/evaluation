@@ -44,7 +44,7 @@ python -c "from app.database import engine; engine.connect()" 2>/dev/null || {
 
 # Check Redis connection
 echo "检查 Redis 连接..."
-python -c "from redis import Redis; from app.config import settings; Redis(host=settings.REDIS_HOST, port=settings.REDIS_PORT).ping()" 2>/dev/null || {
+python -c "from redis import Redis; from app.config import settings; Redis.from_url(settings.REDIS_URL).ping()" 2>/dev/null || {
     echo "错误: 无法连接到 Redis"
     echo "请确保 Redis 已启动: cd .. && docker-compose up -d redis"
     exit 1

@@ -179,12 +179,7 @@ async def start_task_group(group_id: int, db: Session = Depends(get_db)):
         )
     
     # Connect to Redis and create queue
-    redis_conn = Redis(
-        host=settings.REDIS_HOST,
-        port=settings.REDIS_PORT,
-        db=settings.REDIS_DB,
-        password=settings.REDIS_PASSWORD if settings.REDIS_PASSWORD else None
-    )
+    redis_conn = Redis.from_url(settings.REDIS_URL)
     queue = Queue(settings.RQ_QUEUE_NAME, connection=redis_conn)
     
     # Get all task instances for this task group

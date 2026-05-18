@@ -10,12 +10,7 @@ from rq import Worker, Queue, Connection
 from app.config import settings
 
 # Connect to Redis
-redis_conn = Redis(
-    host=settings.REDIS_HOST,
-    port=settings.REDIS_PORT,
-    db=settings.REDIS_DB,
-    password=settings.REDIS_PASSWORD if settings.REDIS_PASSWORD else None
-)
+redis_conn = Redis.from_url(settings.REDIS_URL)
 
 if __name__ == '__main__':
     # Listen to the default queue
