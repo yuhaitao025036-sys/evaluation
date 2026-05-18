@@ -10,7 +10,7 @@ from app import models
 router = APIRouter()
 
 
-@router.get("/datasets", response_model=List[Dataset])
+@router.get("", response_model=List[Dataset])
 async def list_datasets(
     skip: int = 0,
     limit: int = 100,
@@ -21,7 +21,7 @@ async def list_datasets(
     return datasets
 
 
-@router.get("/datasets/{dataset_id}", response_model=Dataset)
+@router.get("/{dataset_id}", response_model=Dataset)
 async def get_dataset(dataset_id: int, db: Session = Depends(get_db)):
     """Get dataset by ID"""
     dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
@@ -30,7 +30,7 @@ async def get_dataset(dataset_id: int, db: Session = Depends(get_db)):
     return dataset
 
 
-@router.post("/datasets/scan")
+@router.post("/scan")
 async def scan_datasets(db: Session = Depends(get_db)):
     """
     Scan datasets folder and register new datasets
@@ -59,7 +59,7 @@ async def scan_datasets(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Error scanning datasets: {str(e)}")
 
 
-@router.post("/datasets/{dataset_id}/import")
+@router.post("/{dataset_id}/import")
 async def import_dataset(
     dataset_id: int,
     start_index: int = 0,
@@ -93,7 +93,7 @@ async def import_dataset(
         raise HTTPException(status_code=500, detail=f"Error importing dataset: {str(e)}")
 
 
-@router.get("/datasets/{dataset_id}/instances")
+@router.get("/{dataset_id}/instances")
 async def get_dataset_instances(
     dataset_id: int,
     skip: int = 0,

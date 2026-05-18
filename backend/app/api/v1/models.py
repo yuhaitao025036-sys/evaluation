@@ -7,17 +7,17 @@ from app.schemas import ModelInfo
 router = APIRouter()
 
 
-@router.get("/models", response_model=List[ModelInfo])
+@router.get("", response_model=List[ModelInfo])
 async def list_models():
     """
     List all available models
-    
+
     Models are configured in app/config.py and hardcoded for simplicity.
     """
     return AVAILABLE_MODELS
 
 
-@router.get("/models/{model_id}", response_model=ModelInfo)
+@router.get("/{model_id}", response_model=ModelInfo)
 async def get_model(model_id: str):
     """Get model information by ID"""
     model = get_model_by_id(model_id)

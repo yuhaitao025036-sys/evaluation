@@ -20,7 +20,7 @@ client.interceptors.request.use(
 
 client.interceptors.response.use(
   (response: AxiosResponse) => {
-    return response.data
+    return response
   },
   (error) => {
     const errorMessage = error.response?.data?.detail || error.message || '请求失败'
@@ -29,4 +29,5 @@ client.interceptors.response.use(
   }
 )
 
+export { client }
 export default client

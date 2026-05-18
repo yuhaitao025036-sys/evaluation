@@ -26,7 +26,7 @@ export const batchesApi = {
       }
     }
   }> {
-    const res = await client.post('/api/v1/batches', data)
+    const res = await client.post('/v1/batches', data)
     return res.data
   },
 
@@ -34,7 +34,7 @@ export const batchesApi = {
    * 获取批次详情
    */
   async get(id: number): Promise<Batch> {
-    const res = await client.get(`/api/v1/batches/${id}`)
+    const res = await client.get(`/v1/batches/${id}`)
     return res.data
   },
 
@@ -48,7 +48,7 @@ export const batchesApi = {
     model?: string
     tag?: string
   }): Promise<Batch[]> {
-    const res = await client.get('/api/v1/batches', { params })
+    const res = await client.get('/v1/batches', { params })
     return res.data
   },
 
@@ -56,7 +56,7 @@ export const batchesApi = {
    * 更新批次配置
    */
   async update(id: number, data: Partial<Batch>): Promise<Batch> {
-    const res = await client.patch(`/api/v1/batches/${id}`, data)
+    const res = await client.patch(`/v1/batches/${id}`, data)
     return res.data
   },
 
@@ -64,7 +64,7 @@ export const batchesApi = {
    * 删除批次
    */
   async delete(id: number): Promise<{ message: string }> {
-    const res = await client.delete(`/api/v1/batches/${id}`)
+    const res = await client.delete(`/v1/batches/${id}`)
     return res.data
   },
 
@@ -79,7 +79,7 @@ export const batchesApi = {
     scheduled_tasks: number
     max_concurrency: number
   }> {
-    const res = await client.post(`/api/v1/batches/${id}/start`, { force })
+    const res = await client.post(`/v1/batches/${id}/start`, { force })
     return res.data.data
   },
 
@@ -93,7 +93,7 @@ export const batchesApi = {
     running_tasks: number
     wait_for_running: boolean
   }> {
-    const res = await client.post(`/api/v1/batches/${id}/pause`, { wait_for_running })
+    const res = await client.post(`/v1/batches/${id}/pause`, { wait_for_running })
     return res.data.data
   },
 
@@ -105,7 +105,7 @@ export const batchesApi = {
     batch_name: string
     scheduled_tasks: number
   }> {
-    const res = await client.post(`/api/v1/batches/${id}/resume`)
+    const res = await client.post(`/v1/batches/${id}/resume`)
     return res.data.data
   },
 
@@ -120,7 +120,7 @@ export const batchesApi = {
     retried_count: number
     scheduled_count: number
   }> {
-    const res = await client.post(`/api/v1/batches/${id}/retry`, params)
+    const res = await client.post(`/v1/batches/${id}/retry`, params)
     return res.data.data
   },
 
@@ -135,7 +135,7 @@ export const batchesApi = {
     overwritten: number
     total: number
   }> {
-    const res = await client.post(`/api/v1/batches/${id}/tasks`, data)
+    const res = await client.post(`/v1/batches/${id}/tasks`, data)
     return res.data.data
   },
 
@@ -147,7 +147,7 @@ export const batchesApi = {
     skip?: number
     limit?: number
   }): Promise<BatchResult[]> {
-    const res = await client.get(`/api/v1/batches/${id}/tasks`, { params })
+    const res = await client.get(`/v1/batches/${id}/tasks`, { params })
     return res.data
   },
 
@@ -155,7 +155,7 @@ export const batchesApi = {
    * 获取单个任务详情
    */
   async getTask(id: number, instance_id: string): Promise<BatchResult> {
-    const res = await client.get(`/api/v1/batches/${id}/tasks/${encodeURIComponent(instance_id)}`)
+    const res = await client.get(`/v1/batches/${id}/tasks/${encodeURIComponent(instance_id)}`)
     return res.data
   },
 
@@ -165,7 +165,7 @@ export const batchesApi = {
    * 获取批次统计信息
    */
   async getStats(id: number): Promise<BatchStats> {
-    const res = await client.get(`/api/v1/batches/${id}/stats`)
+    const res = await client.get(`/v1/batches/${id}/stats`)
     return res.data
   },
 
@@ -175,7 +175,7 @@ export const batchesApi = {
    * 获取任务的详细验证报告
    */
   async getTaskValidationDetail(id: number, instance_id: string): Promise<any> {
-    const res = await client.get(`/api/v1/batches/${id}/tasks/${encodeURIComponent(instance_id)}/validation-detail`)
+    const res = await client.get(`/v1/batches/${id}/tasks/${encodeURIComponent(instance_id)}/validation-detail`)
     return res.data
   },
 
@@ -183,7 +183,7 @@ export const batchesApi = {
    * 获取任务的执行轨迹
    */
   async getTaskTrace(id: number, instance_id: string): Promise<any[]> {
-    const res = await client.get(`/api/v1/batches/${id}/tasks/${encodeURIComponent(instance_id)}/trace`)
+    const res = await client.get(`/v1/batches/${id}/tasks/${encodeURIComponent(instance_id)}/trace`)
     return res.data
   },
 
@@ -191,7 +191,7 @@ export const batchesApi = {
    * 获取任务的补丁内容 (文本形式)
    */
   async getTaskPatchContent(id: number, instance_id: string): Promise<{ content: string }> {
-    const res = await client.get(`/api/v1/batches/${id}/tasks/${encodeURIComponent(instance_id)}/patch-content`)
+    const res = await client.get(`/v1/batches/${id}/tasks/${encodeURIComponent(instance_id)}/patch-content`)
     return res.data
   },
 
@@ -199,6 +199,6 @@ export const batchesApi = {
    * 下载任务的补丁文件
    */
   downloadTaskPatch(id: number, instance_id: string): string {
-    return `${client.defaults.baseURL}/api/v1/batches/${id}/tasks/${encodeURIComponent(instance_id)}/patch`
+    return `${client.defaults.baseURL}/v1/batches/${id}/tasks/${encodeURIComponent(instance_id)}/patch`
   }
 }

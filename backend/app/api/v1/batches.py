@@ -18,7 +18,7 @@ from app.schemas import (
 from app.services.batch_service import BatchService
 from app.services.scheduler_service import SchedulerService
 
-router = APIRouter(prefix="/api/v1/batches", tags=["batches"])
+router = APIRouter()
 
 
 @router.post("", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
