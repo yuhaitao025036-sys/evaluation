@@ -8,6 +8,7 @@
 # ========================================
 docker-compose.yml
 backend/app/config.py
+backend/app/.env
 
 # ========================================
 # Python
