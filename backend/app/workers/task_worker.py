@@ -21,7 +21,6 @@ from typing import Dict, Any, Optional
 # 数据库连接
 from app.database import SessionLocal
 from app.models import BatchResult, Batch, Script, DatasetInstance
-from app.services.scheduler_service import SchedulerService
 
 
 def execute_single_task(task_id: int):
@@ -129,6 +128,7 @@ def execute_single_task(task_id: int):
         # 5. 通知调度器继续调度
         # ✅ 确保即使通知失败也不影响任务状态
         try:
+            from app.services.scheduler_service import SchedulerService
             scheduler = SchedulerService(db)
             scheduler.on_task_completed(task_id)
         except Exception as e:
@@ -152,6 +152,7 @@ def execute_single_task(task_id: int):
                 
                 # ✅ 即使发生异常，也要通知调度器继续调度下一个任务
                 try:
+                    from app.services.scheduler_service import SchedulerService
                     scheduler = SchedulerService(db)
                     scheduler.on_task_completed(task_id)
                 except Exception as scheduler_error:

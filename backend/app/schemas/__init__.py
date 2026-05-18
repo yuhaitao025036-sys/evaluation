@@ -3,6 +3,14 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
+from app.schemas.batch import (
+    BatchCreate, BatchUpdate, BatchResponse, BatchStats,
+    BatchResultResponse, BatchResultUpdate,
+    BatchStartRequest, BatchPauseRequest, BatchRetryRequest, BatchAddTasksRequest,
+    MessageResponse, ErrorResponse, PaginatedResponse,
+    DatasetResponse, DatasetInstanceResponse, ScriptResponse,
+)
+
 
 # Dataset schemas
 class DatasetBase(BaseModel):

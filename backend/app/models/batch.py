@@ -5,10 +5,8 @@ SQLAlchemy Models for DUCC Evaluation System v2.0
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Text, BigInteger, Boolean, Float, ForeignKey, TIMESTAMP, Index, UniqueConstraint, JSON
 from sqlalchemy.orm import relationship
-from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
-
-Base = declarative_base()
+from app.database import Base
 
 
 # ============================================================================
@@ -34,6 +32,7 @@ class Dataset(Base):
     # 关系
     instances = relationship("DatasetInstance", back_populates="dataset", cascade="all, delete-orphan")
     batches = relationship("Batch", back_populates="dataset")
+    tasks = relationship("Task", back_populates="dataset")
 
 
 class DatasetInstance(Base):
@@ -73,6 +72,7 @@ class Script(Base):
     
     # 关系
     batches = relationship("Batch", back_populates="script")
+    tasks = relationship("Task", back_populates="script")
     
     __table_args__ = (
         Index('idx_scripts_filename', 'file_name'),
