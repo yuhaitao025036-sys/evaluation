@@ -44,7 +44,7 @@ fi
 echo "======================================"
 echo "正在启动 Vite 开发服务器..."
 echo "访问地址: http://localhost:5173"
-echo "API 代理: http://localhost:8000"
+echo "API 代理: http://localhost:8080"
 echo "======================================"
 echo ""
 
