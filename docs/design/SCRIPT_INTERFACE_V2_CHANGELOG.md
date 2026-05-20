@@ -1,367 +1,140 @@
-# 脚本接口 v2.0 变更说明
+# 脚本接口 v2 当前实现说明
 
-**更新日期**: 2026-05-14  
-**变更类型**: 重大架构变更（Breaking Changes）
+**更新日期**: 2026-05-19
 
-## 概述
+## 核心变化
 
-脚本接口从 v1.0（范围处理模式）升级到 v2.0（单任务执行模式），以支持系统级任务调度和细粒度并发控制。
+脚本接口已经从“脚本批量处理数据范围”调整为“DUCC 后端调度单实例任务”。
 
-## 为什么要改？
+当前链路：
 
-### v1.0 的问题
+1. 数据集文件放到 `data/datasets`。
+2. 扫描数据目录，只创建 `datasets` 文件元信息。
+3. 导入实例，把每行写入 `dataset_instances.data`。
+4. 创建批次时选择已导入实例。
+5. worker 为每个 `BatchResult` 单独调用脚本。
+6. worker 把当前实例写入 `input_instance.json`，并传给脚本。
+7. 脚本把 `task_summary.json` 直接写到 `--output-dir`。
 
-在 v1.0 中，脚本负责循环处理数据范围：
+## 当前系统参数
 
-```python
-# v1.0 模式
-for i in range(args.start_index, args.end_index):
-    instance = dataset[i]
-    process(instance)
-```
-
-这导致以下问题：
-
-1. **无法控制并发**：脚本内部循环意味着系统无法控制总并发数
-2. **重试困难**：某个实例失败需要重跑整个范围
-3. **状态难追踪**：无法实时知道哪些实例正在运行、哪些已完成
-4. **资源管理差**：无法动态调整资源分配或暂停/恢复任务
-5. **优先级不支持**：无法为重要任务分配更高优先级
-
-### v2.0 的优势
-
-在 v2.0 中，系统调度单个任务：
-
-```python
-# v2.0 模式
-instance = load_instance_by_id(args.instance_id)
-result = process(instance)
-```
-
-优势：
-
-1. ✅ **细粒度并发控制**：系统控制全局并发数和批次并发数
-2. ✅ **失败重试**：单个任务失败自动重试，不影响其他任务
-3. ✅ **实时状态**：每个任务状态独立追踪（pending/queued/running/completed/failed）
-4. ✅ **暂停/恢复**：可以暂停批次、优先处理重要任务
-5. ✅ **资源优化**：Worker 池动态管理，资源利用率更高
-6. ✅ **任务优先级**：支持批次级和任务级优先级
-
----
-
-## 参数变更详情
-
-### 移除的参数
-
-| 参数 | 说明 | 替代方案 |
-|------|------|----------|
-| `--dataset-path` | 数据集文件路径 | 脚本内部通过环境变量或配置管理 |
-| `--start-index` | 起始索引 | 系统调度，脚本无需知道 |
-| `--end-index` | 结束索引 | 系统调度，脚本无需知道 |
-
-### 新增的必需参数
-
-| 参数 | 类型 | 说明 | 示例 |
-|------|------|------|------|
-| `--instance-id` | string | 要处理的实例 ID | `django__django-11099` |
-| `--model` | string | 模型标识符 | `gpt-4-turbo` |
-| `--tag` | string | 批次标签 | `baseline` |
-
-### 保留的参数
-
-| 参数 | 说明 | 无变化 |
-|------|------|--------|
-| `--output-dir` | 输出目录 | ✅ 保留 |
-
----
-
-## 代码迁移指南
-
-### 1. 参数解析变更
-
-**旧代码（v1.0）**：
-```python
-parser.add_argument('--dataset-path', required=True)
-parser.add_argument('--output-dir', required=True)
-parser.add_argument('--start-index', type=int, default=0)
-parser.add_argument('--end-index', type=int)
-parser.add_argument('--model', default='gpt-4-turbo')  # 可选
-```
-
-**新代码（v2.0）**：
-```python
-parser.add_argument('--instance-id', required=True)     # ⭐️ 新增
-parser.add_argument('--output-dir', required=True)
-parser.add_argument('--model', required=True)           # ⭐️ 必需
-parser.add_argument('--tag', required=True)             # ⭐️ 新增
-```
-
-### 2. 数据加载变更
-
-**旧代码（v1.0）**：
-```python
-def load_dataset(dataset_path, start_index, end_index):
-    import pandas as pd
-    df = pd.read_parquet(dataset_path)
-    return df.iloc[start_index:end_index].to_dict('records')
-
-instances = load_dataset(args.dataset_path, args.start_index, args.end_index)
-```
-
-**新代码（v2.0）**：
-```python
-# 数据集路径通过环境变量管理
-DATASET_BASE_PATH = os.getenv('DUCC_DATASET_PATH', '/path/to/datasets')
-
-def load_instance_by_id(dataset_name, instance_id):
-    import pandas as pd
-    dataset_path = os.path.join(DATASET_BASE_PATH, f"{dataset_name}.parquet")
-    df = pd.read_parquet(dataset_path)
-    instance = df[df['instance_id'] == instance_id]
-    
-    if instance.empty:
-        raise ValueError(f"Instance {instance_id} not found")
-    
-    return instance.iloc[0].to_dict()
-
-# 只加载一个实例
-instance = load_instance_by_id('swebench-lite', args.instance_id)
-```
-
-### 3. 主逻辑变更
-
-**旧代码（v1.0）**：
-```python
-def main():
-    args = parser.parse_args()
-    
-    # 加载数据集
-    instances = load_dataset(args.dataset_path, args.start_index, args.end_index)
-    
-    # 循环处理
-    results = []
-    for instance in instances:
-        result = evaluate(instance)
-        results.append(result)
-    
-    # 生成汇总报告
-    generate_report(results)
-```
-
-**新代码（v2.0）**：
-```python
-def main():
-    args = parser.parse_args()
-    
-    # 加载单个实例
-    instance = load_instance_by_id(args.dataset, args.instance_id)
-    
-    # 处理单个实例
-    result = evaluate(instance, args)
-    
-    # 保存结果（无需汇总，系统负责聚合）
-    save_outputs(result, args.output_dir)
-```
-
-### 4. 输出变更
-
-**旧代码（v1.0）**：
-```python
-# 输出到 tasks/<safe_id>/ 子目录
-task_dir = os.path.join(args.output_dir, 'tasks', safe_id)
-os.makedirs(task_dir, exist_ok=True)
-
-# 生成汇总报告
-with open(os.path.join(args.output_dir, 'report.json'), 'w') as f:
-    json.dump(report, f)
-```
-
-**新代码（v2.0）**：
-```python
-# 直接输出到 output_dir（系统已分配实例目录）
-os.makedirs(args.output_dir, exist_ok=True)
-
-# 只保存单个任务结果，无需汇总报告
-with open(os.path.join(args.output_dir, 'task_summary.json'), 'w') as f:
-    json.dump(summary, f)
-```
-
----
-
-## 完整迁移示例
-
-### 迁移前（v1.0）
-
-```python
-#!/usr/bin/env python3
-import argparse
-import pandas as pd
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset-path', required=True)
-    parser.add_argument('--output-dir', required=True)
-    parser.add_argument('--start-index', type=int, default=0)
-    parser.add_argument('--end-index', type=int)
-    parser.add_argument('--model', default='gpt-4-turbo')
-    args = parser.parse_args()
-    
-    # 加载数据集
-    df = pd.read_parquet(args.dataset_path)
-    instances = df.iloc[args.start_index:args.end_index].to_dict('records')
-    
-    # 循环处理
-    for instance in instances:
-        instance_id = instance['instance_id']
-        result = evaluate(instance, args.model)
-        save_result(result, args.output_dir, instance_id)
-    
-    print(f"Processed {len(instances)} instances")
-
-if __name__ == '__main__':
-    main()
-```
-
-### 迁移后（v2.0）
-
-```python
-#!/usr/bin/env python3
-import argparse
-import os
-import pandas as pd
-
-DATASET_BASE_PATH = os.getenv('DUCC_DATASET_PATH', '/path/to/datasets')
-
-def load_instance_by_id(dataset_name, instance_id):
-    dataset_path = os.path.join(DATASET_BASE_PATH, f"{dataset_name}.parquet")
-    df = pd.read_parquet(dataset_path)
-    instance = df[df['instance_id'] == instance_id]
-    
-    if instance.empty:
-        raise ValueError(f"Instance {instance_id} not found")
-    
-    return instance.iloc[0].to_dict()
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--instance-id', required=True)      # ⭐️ 改
-    parser.add_argument('--output-dir', required=True)
-    parser.add_argument('--model', required=True)            # ⭐️ 改
-    parser.add_argument('--tag', required=True)              # ⭐️ 新增
-    parser.add_argument('--dataset', default='swebench-lite')  # 可选
-    args = parser.parse_args()
-    
-    # 加载单个实例
-    instance = load_instance_by_id(args.dataset, args.instance_id)
-    
-    # 处理单个实例
-    result = evaluate(instance, args.model)
-    result['model'] = args.model
-    result['tag'] = args.tag
-    
-    # 保存结果
-    save_result(result, args.output_dir)
-    
-    print(f"Processed instance: {args.instance_id}")
-
-if __name__ == '__main__':
-    main()
-```
-
----
-
-## 常见问题
-
-### Q1: 我的脚本需要处理 100 个实例，现在怎么调用？
-
-**A**: 不需要自己循环调用。系统会自动为每个实例创建一个任务并调用你的脚本：
+worker 当前会调用：
 
 ```bash
-# v1.0（旧方式 - 一次调用处理 100 个）
-python script.py --dataset-path data.parquet --start-index 0 --end-index 100
-
-# v2.0（新方式 - 系统调用 100 次，每次处理 1 个）
-# 系统自动执行：
-python script.py --instance-id "instance-1" --model gpt-4 --tag baseline
-python script.py --instance-id "instance-2" --model gpt-4 --tag baseline
-...
-python script.py --instance-id "instance-100" --model gpt-4 --tag baseline
+python script.py \
+  --instance-id <instance_id> \
+  --instance-data-path <output_dir>/input_instance.json \
+  --dataset-id <dataset_id> \
+  --dataset-name <dataset_name> \
+  --dataset-path <dataset_file_path> \
+  --output-dir <task_output_dir> \
+  --model <model> \
+  --tag <tag> \
+  [execution_config 参数]
 ```
 
-### Q2: 如何控制并发数？
+脚本必须接收这些系统参数。其中：
 
-**A**: 在批次配置中设置 `max_concurrency`：
+- `--instance-data-path` 是推荐数据入口。
+- `--dataset-path` 保留给 SWE-bench 等外部评测器使用。
+- `--model` 当前主要是 Ducc Agent 模型，后续可映射到千帆等其他平台。
+
+## 数据加载迁移
+
+旧方式：
+
+```python
+df = pd.read_parquet(args.dataset_path)
+instances = df.iloc[args.start_index:args.end_index]
+```
+
+当前推荐方式：
+
+```python
+import json
+
+with open(args.instance_data_path, "r", encoding="utf-8") as f:
+    payload = json.load(f)
+
+instance = payload["data"]
+```
+
+## 输出迁移
+
+旧文档曾描述：
+
+```text
+<output-dir>/tasks/<safe_instance_id>/task_summary.json
+```
+
+当前 worker 实际要求：
+
+```text
+<output-dir>/task_summary.json
+```
+
+因为 worker 传入的 `--output-dir` 已经是单个实例目录。
+
+## 外部 batch 脚本迁移原则
+
+外部脚本如果原来通过 `ids-file`、`parallel`、`run_batch.sh` 自己做批量调度，不能直接注册为 DUCC 脚本。
+
+迁移方式：
+
+1. 复制外部依赖到 `data/scripts/<runtime_dir>`，不移动原始目录。
+2. 在 `data/scripts` 根目录新增 Python wrapper。
+3. wrapper 接收 DUCC 系统参数。
+4. wrapper 每次只处理一个 `--instance-id`。
+5. wrapper 调用外部单实例入口。
+6. wrapper 归一化输出到 `--output-dir` 根目录。
+
+## SWE-bench Pro 映射
+
+原命令：
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/batches \
-  -H "Content-Type: application/json" \
-  -d '{
-    "batch_name": "baseline_run_1",
-    "dataset_id": 1,
-    "model": "gpt-4-turbo",
-    "tag": "baseline",
-    "max_concurrency": 10
-  }'
+bash run_batch_by_ids.sh \
+  --ids-file ./ids/batch2_test_failed_only.txt \
+  --model "Claude Sonnet 4.6" \
+  --parallel 3 \
+  --enable-eval \
+  --dockerhub-username jefzda \
+  --dataset-path /ssd1/Dejavu/datasets/SWE-bench_Pro/test-python.parquet \
+  --scripts-dir ./SWE-bench_Pro-os/run_scripts
 ```
 
-系统会确保最多同时运行 10 个任务。
+DUCC 映射：
 
-### Q3: 数据集路径怎么传递？
+```text
+--ids-file              -> 批次 instance_ids
+--model                 -> 批次 model
+--parallel              -> 批次 max_concurrency / worker 并发
+--enable-eval           -> wrapper 参数 enable-eval
+--dockerhub-username    -> wrapper 参数 dockerhub-username
+--dataset-path          -> 数据集扫描导入后由 worker 传入
+--scripts-dir           -> wrapper 参数 scripts-dir
+```
 
-**A**: 三种方式：
+当前 wrapper：
 
-1. **环境变量（推荐）**：
-   ```bash
-   export DUCC_DATASET_PATH=/path/to/datasets
-   ```
+```text
+data/scripts/ducc_swebench_pro_wrapper.py
+```
 
-2. **配置文件**：
-   ```python
-   # config.py
-   DATASET_BASE_PATH = '/path/to/datasets'
-   ```
+外部依赖目录：
 
-3. **可选参数**：
-   ```python
-   parser.add_argument('--dataset', default='swebench-lite')
-   # 脚本内部组装：f"{DATASET_BASE_PATH}/{args.dataset}.parquet"
-   ```
+```text
+data/scripts/swe_bench_integrated_eval/
+```
 
-### Q4: 失败重试怎么配置？
-
-**A**: 在批次创建时设置 `max_retries`：
+## 验证清单
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/batches \
-  -H "Content-Type: application/json" \
-  -d '{
-    "batch_name": "baseline_run_1",
-    "max_retries": 3
-  }'
+python -m py_compile data/scripts/ducc_swebench_pro_wrapper.py
+python data/scripts/ducc_swebench_pro_wrapper.py --help
+python -m py_compile \
+  data/scripts/swe_bench_integrated_eval/test_tmux_cc_experience.py \
+  data/scripts/swe_bench_integrated_eval/evaluate_single_instance.py
 ```
 
-脚本无需处理重试逻辑，系统自动重试失败的任务。
-
-### Q5: 我的旧脚本还能用吗？
-
-**A**: 不能直接使用。需要按照本文档迁移：
-
-1. 修改参数解析（移除 index 参数，添加 instance-id）
-2. 移除循环逻辑
-3. 修改数据加载为按 ID 查询
-4. 修改输出路径（不再需要 tasks 子目录）
-
-参考 `/data/scripts/example_script.py` 的 v2.0 模板。
-
----
-
-## 相关文档
-
-- **[script-interface.md](script-interface.md)** - v2.0 完整接口规范
-- **[task-scheduling-and-concurrency.md](task-scheduling-and-concurrency.md)** - 任务调度机制说明
-- **[simplified-data-model.md](simplified-data-model.md)** - 数据模型设计
-- **[/data/scripts/example_script.py](../../data/scripts/example_script.py)** - v2.0 示例脚本
-
----
-
-**重要提醒**：所有新脚本必须遵循 v2.0 规范。旧脚本需要尽快迁移，未来版本将不再兼容 v1.0 接口。
+通过 UI 或 API 扫描脚本后，确认根目录 wrapper 被注册，helper 目录中的脚本不作为独立脚本注册。
