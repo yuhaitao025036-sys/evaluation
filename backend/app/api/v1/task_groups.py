@@ -11,7 +11,7 @@ from app import models
 router = APIRouter()
 
 
-@router.post("/task-groups", response_model=TaskGroup)
+@router.post("", response_model=TaskGroup)
 async def create_task_group(
     request: TaskGroupCreate,
     db: Session = Depends(get_db)
@@ -49,7 +49,7 @@ async def create_task_group(
         raise HTTPException(status_code=500, detail=f"Error creating task group: {str(e)}")
 
 
-@router.get("/task-groups", response_model=List[TaskGroup])
+@router.get("", response_model=List[TaskGroup])
 async def list_task_groups(
     skip: int = 0,
     limit: int = 100,
@@ -72,7 +72,7 @@ async def list_task_groups(
     return task_groups
 
 
-@router.get("/task-groups/{group_id}", response_model=TaskGroupWithDetails)
+@router.get("/{group_id}", response_model=TaskGroupWithDetails)
 async def get_task_group(group_id: int, db: Session = Depends(get_db)):
     """Get task group by ID with details"""
     task_group = db.query(models.TaskGroup).filter(
@@ -102,7 +102,7 @@ async def get_task_group(group_id: int, db: Session = Depends(get_db)):
     return result
 
 
-@router.get("/task-groups/{group_id}/progress")
+@router.get("/{group_id}/progress")
 async def get_task_group_progress(group_id: int, db: Session = Depends(get_db)):
     """Get task group progress statistics"""
     try:
@@ -122,7 +122,7 @@ async def get_task_group_progress(group_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.get("/task-groups/{group_id}/instances")
+@router.get("/{group_id}/instances")
 async def get_task_group_instances(
     group_id: int,
     skip: int = 0,

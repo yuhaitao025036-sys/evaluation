@@ -6,7 +6,7 @@ import CreateModeSelector from './CreateModeSelector'
 import NewBatchForm from './NewBatchForm'
 import AppendBatchForm from './AppendBatchForm'
 import { batchesApi } from '@/api/batches'
-import type { BatchCreateRequest } from '@/types'
+import type { BatchAddTasksRequest, BatchCreateRequest } from '@/types'
 import './index.css'
 
 type CreateMode = 'new' | 'append' | null
@@ -46,7 +46,7 @@ export default function BatchCreate() {
     try {
       const result = await batchesApi.create(data)
       message.success(result.message)
-      
+
       // 显示创建统计
       const { stats } = result.data
       if (stats.skipped > 0) {
@@ -55,21 +55,50 @@ export default function BatchCreate() {
       if (stats.overwritten > 0) {
         message.warning(`覆盖 ${stats.overwritten} 个已存在的实例`)
       }
-      
+
       // 询问是否启动
       const shouldStart = window.confirm(
         `批次创建成功，共 ${stats.total} 个任务。\n\n是否立即启动批次？`
       )
-      
+
       if (shouldStart) {
         await batchesApi.start(result.data.batch_id)
         message.success('批次已启动')
       }
-      
+
       navigate(`/batches/${result.data.batch_id}`)
     } catch (error: any) {
       console.error('创建批次失败:', error)
       message.error(error.response?.data?.detail || '创建批次失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleAppendSubmit = async (batchId: number, data: BatchAddTasksRequest) => {
+    setLoading(true)
+    try {
+      const stats = await batchesApi.addTasks(batchId, data)
+      message.success(`已追加 ${stats.total} 个任务`)
+      if (stats.skipped > 0) {
+        message.info(`跳过 ${stats.skipped} 个已存在的实例`)
+      }
+      if (stats.overwritten > 0) {
+        message.warning(`覆盖 ${stats.overwritten} 个已存在的实例`)
+      }
+
+      if (stats.total > 0) {
+        const shouldStart = window.confirm(`已追加 ${stats.total} 个任务。\n\n是否立即启动批次？`)
+        if (shouldStart) {
+          await batchesApi.start(batchId, true)
+          message.success('批次已启动')
+        }
+      }
+
+      navigate(`/batches/${batchId}`)
+    } catch (error: any) {
+      console.error('追加任务失败:', error)
+      message.error(error.response?.data?.detail || '追加任务失败')
     } finally {
       setLoading(false)
     }
@@ -120,7 +149,7 @@ export default function BatchCreate() {
         {currentStep === 1 && mode === 'append' && (
           <AppendBatchForm
             initialBatchId={searchParams.get('append_to')}
-            onSubmit={handleSubmit}
+            onSubmit={handleAppendSubmit}
             loading={loading}
             onCancel={handleBack}
           />

@@ -20,7 +20,7 @@ from typing import Dict, Any, Optional
 
 # 数据库连接
 from app.database import SessionLocal
-from app.models import BatchResult, Batch, Script, DatasetInstance
+from app.models import BatchResult, Batch, Script, Dataset, DatasetInstance
 
 
 def execute_single_task(task_id: int):
@@ -67,6 +67,11 @@ def execute_single_task(task_id: int):
         print(f"[Task {task_id}] Starting: {task.instance_id}")
         print(f"[Task {task_id}] Model: {task.model}, Tag: {task.tag}")
         
+        dataset = db.query(Dataset).filter(Dataset.id == batch.dataset_id).first()
+        if not dataset:
+            print(f"Error: Dataset {batch.dataset_id} not found")
+            return
+
         # 3. 执行评估脚本
         start_time = time.time()
         result = _execute_script(
@@ -75,7 +80,9 @@ def execute_single_task(task_id: int):
             output_dir=task.output_dir,
             model=task.model,
             tag=task.tag,
-            execution_config=batch.execution_config or {}
+            execution_config=batch.execution_config or {},
+            dataset=dataset,
+            dataset_instance=dataset_instance
         )
         duration = time.time() - start_time
         
@@ -110,10 +117,29 @@ def execute_single_task(task_id: int):
             print(f"[Task {task_id}] ✓ Completed in {duration:.2f}s")
         else:
             # 执行失败
+            summary = _parse_task_summary(task.output_dir)
+
             task.status = 'failed'
-            task.error_message = result.get('error', 'Unknown error')
-            task.duration_seconds = duration
-            
+            task.error_message = summary.get('error_message') or summary.get('error') or result.get('error', 'Unknown error')
+            task.duration_seconds = summary.get('duration_seconds', duration)
+            task.result_summary = summary
+            task.validation_success = summary.get('validation', {}).get('success')
+            task.tests_passed = summary.get('validation', {}).get('tests_passed', 0)
+            task.tests_failed = summary.get('validation', {}).get('tests_failed', 0)
+            task.tests_total = summary.get('validation', {}).get('tests_total', 0)
+
+            patch_path = os.path.join(task.output_dir, 'extracted_patch.diff')
+            if os.path.exists(patch_path):
+                task.patch_path = patch_path
+
+            trace_path = os.path.join(task.output_dir, 'execution_trace.jsonl')
+            if os.path.exists(trace_path):
+                task.trace_file_path = trace_path
+
+            validation_detail_path = os.path.join(task.output_dir, 'validation_detail.json')
+            if os.path.exists(validation_detail_path):
+                task.validation_detail_path = validation_detail_path
+
             # 检查是否需要重试
             if task.retry_count < task.max_retries:
                 task.retry_count += 1
@@ -171,7 +197,9 @@ def _execute_script(
     output_dir: str,
     model: str,
     tag: str,
-    execution_config: Dict[str, Any]
+    execution_config: Dict[str, Any],
+    dataset: Dataset,
+    dataset_instance: DatasetInstance
 ) -> Dict[str, Any]:
     """
     执行评估脚本
@@ -185,12 +213,26 @@ def _execute_script(
     try:
         # 确保输出目录存在
         os.makedirs(output_dir, exist_ok=True)
-        
+        input_path = os.path.join(output_dir, 'input_instance.json')
+        with open(input_path, 'w', encoding='utf-8') as f:
+            json.dump({
+                'dataset_id': dataset.id,
+                'dataset_name': dataset.name,
+                'dataset_file_path': dataset.file_path,
+                'dataset_instance_id': dataset_instance.id,
+                'instance_id': dataset_instance.instance_id,
+                'data': dataset_instance.data,
+            }, f, ensure_ascii=False, indent=2, default=str)
+
         # 构建命令
         cmd = [
             'python',
             script_path,
             '--instance-id', instance_id,
+            '--instance-data-path', input_path,
+            '--dataset-id', str(dataset.id),
+            '--dataset-name', dataset.name,
+            '--dataset-path', dataset.file_path,
             '--output-dir', output_dir,
             '--model', model,
             '--tag', tag
@@ -198,11 +240,18 @@ def _execute_script(
         
         # 添加自定义参数
         for key, value in execution_config.items():
+            if value is None or value == '' or value is False:
+                continue
+
+            arg_name = key if key.startswith('--') else f"--{key.replace('_', '-')}"
             if isinstance(value, bool):
-                if value:
-                    cmd.append(f'--{key}')
+                cmd.append(arg_name)
+            elif isinstance(value, list):
+                for item in value:
+                    cmd.append(arg_name)
+                    cmd.append(str(item))
             else:
-                cmd.append(f'--{key}')
+                cmd.append(arg_name)
                 cmd.append(str(value))
         
         print(f"Executing: {' '.join(cmd)}")

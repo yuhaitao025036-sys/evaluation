@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react'
 import { Form, Select, Radio, Alert, Button, Space, Divider, message, Card, Descriptions } from 'antd'
 import { batchesApi } from '@/api/batches'
-import type { Batch, BatchAddTasksRequest, BatchCreateRequest } from '@/types'
+import type { Batch, BatchAddTasksRequest } from '@/types'
 import InstanceSelector from './InstanceSelector'
 
 interface Props {
   initialBatchId?: string | null
-  onSubmit: (data: BatchCreateRequest) => void
+  onSubmit: (batchId: number, data: BatchAddTasksRequest) => void
   loading: boolean
   onCancel: () => void
 }
@@ -52,18 +52,12 @@ export default function AppendBatchForm({ initialBatchId, onSubmit, loading, onC
   const handleSubmit = async (values: any) => {
     if (!selectedBatch) return
 
-    const data: BatchCreateRequest = {
-      batch_name: selectedBatch.batch_name,
-      dataset_id: selectedBatch.dataset_id,
-      script_id: selectedBatch.script_id,
-      model: selectedBatch.model,
-      tag: selectedBatch.tag,
-      append_to_existing: true,
+    const data: BatchAddTasksRequest = {
       overwrite_existing: overwriteMode,
       ...values.instance_selection
     }
 
-    onSubmit(data)
+    onSubmit(selectedBatch.id, data)
   }
 
   return (

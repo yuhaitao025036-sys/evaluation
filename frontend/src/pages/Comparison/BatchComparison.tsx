@@ -4,7 +4,7 @@ import { comparisonsApi } from '@/api/comparisons'
 import type { ComparisonMetadata, ComparisonResponse } from '@/types'
 import ComparisonResultView from './ComparisonResultView'
 
-export default function ModelComparison() {
+export default function BatchComparison() {
   const [form] = Form.useForm()
   const [metadata, setMetadata] = useState<ComparisonMetadata | null>(null)
   const [loading, setLoading] = useState(false)
@@ -19,17 +19,15 @@ export default function ModelComparison() {
   const handleCompare = async (values: any) => {
     setLoading(true)
     try {
-      const data = await comparisonsApi.compareByModels({
-        models: values.models,
-        dataset_id: values.dataset_id,
-        tag: values.tag,
+      const data = await comparisonsApi.compareBatches({
+        batch_ids: values.batch_ids,
         only_common_instances: values.only_common_instances ?? true,
         instance_limit: values.instance_limit || 200,
         include_instances: true,
       })
       setResult(data)
     } catch (error: any) {
-      message.error(error.response?.data?.detail || '模型对比失败')
+      message.error(error.response?.data?.detail || '批次对比失败')
     } finally {
       setLoading(false)
     }
@@ -37,23 +35,25 @@ export default function ModelComparison() {
 
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
-      <Card title="模型对比配置">
+      <Card title="批次对比配置">
         <Form
           form={form}
           layout="vertical"
           onFinish={handleCompare}
           initialValues={{ only_common_instances: true, instance_limit: 200 }}
         >
-          <Form.Item name="models" label="模型" rules={[{ required: true, message: '请选择至少两个模型' }]}>
-            <Select mode="multiple" placeholder="请选择要对比的模型" options={(metadata?.models || []).map(model => ({ value: model, label: model }))} />
+          <Form.Item name="batch_ids" label="批次" rules={[{ required: true, message: '请选择至少两个批次' }]}>
+            <Select
+              mode="multiple"
+              placeholder="请选择要对比的批次"
+              optionFilterProp="label"
+              options={(metadata?.batches || []).map(batch => ({
+                value: batch.id,
+                label: `#${batch.id} ${batch.batch_name} | ${batch.model} | ${batch.tag} | ${batch.completed_tasks}/${batch.total_tasks}`,
+              }))}
+            />
           </Form.Item>
           <Space wrap align="end">
-            <Form.Item name="dataset_id" label="数据集">
-              <Select allowClear placeholder="可选" style={{ width: 220 }} options={(metadata?.datasets || []).map(dataset => ({ value: dataset.id, label: dataset.name }))} />
-            </Form.Item>
-            <Form.Item name="tag" label="Tag">
-              <Select allowClear placeholder="可选" style={{ width: 220 }} options={(metadata?.tags || []).map(tag => ({ value: tag, label: tag }))} />
-            </Form.Item>
             <Form.Item name="only_common_instances" label="只看共同实例" valuePropName="checked">
               <Switch />
             </Form.Item>

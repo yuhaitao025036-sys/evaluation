@@ -97,7 +97,7 @@ export default function TaskCreate() {
           <Select placeholder="请选择评测脚本">
             {scripts.map((script) => (
               <Select.Option key={script.id} value={script.id}>
-                {script.name}
+                {script.file_name || script.name || script.file_path}
               </Select.Option>
             ))}
           </Select>

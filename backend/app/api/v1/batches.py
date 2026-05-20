@@ -13,7 +13,7 @@ from app.database import get_db
 from app.schemas import (
     BatchCreate, BatchUpdate, BatchResponse, BatchStats,
     BatchResultResponse, MessageResponse, BatchStartRequest,
-    BatchPauseRequest, BatchRetryRequest, BatchAddTasksRequest
+    BatchPauseRequest, BatchRetryRequest, BatchTaskRerunRequest, BatchAddTasksRequest
 )
 from app.services.batch_service import BatchService
 from app.services.scheduler_service import SchedulerService
@@ -288,14 +288,49 @@ async def get_batch_task(
     """获取批次中指定实例的任务结果"""
     service = BatchService(db)
     task = service.get_batch_task(batch_id, instance_id)
-    
+
     if not task:
         raise HTTPException(
             status_code=404,
             detail=f"批次 {batch_id} 中不存在实例 {instance_id} 的任务"
         )
-    
+
     return task
+
+
+@router.post("/{batch_id}/tasks/{instance_id}/run", response_model=MessageResponse)
+async def run_single_task(
+    batch_id: int,
+    instance_id: str,
+    db: Session = Depends(get_db)
+):
+    """只执行指定 pending 子任务，不触发批次级调度。"""
+    try:
+        scheduler = SchedulerService(db)
+        result = scheduler.run_single_task(batch_id, instance_id)
+        return MessageResponse(message="子任务已加入队列", data=result)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{batch_id}/tasks/{instance_id}/rerun", response_model=MessageResponse)
+async def rerun_single_task(
+    batch_id: int,
+    instance_id: str,
+    request: BatchTaskRerunRequest = BatchTaskRerunRequest(),
+    db: Session = Depends(get_db)
+):
+    """强制重跑指定非 pending 子任务，不触发批次级调度。"""
+    try:
+        scheduler = SchedulerService(db)
+        result = scheduler.rerun_single_task(
+            batch_id=batch_id,
+            instance_id=instance_id,
+            reset_retry_count=request.reset_retry_count,
+        )
+        return MessageResponse(message="子任务已加入重跑队列", data=result)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ============================================================================
@@ -447,6 +482,45 @@ async def get_task_patch(
         media_type='text/plain',
         filename=f"{instance_id}_patch.diff"
     )
+
+
+@router.get("/{batch_id}/tasks/{instance_id}/logs/{log_name}")
+async def get_task_log_content(
+    batch_id: int,
+    instance_id: str,
+    log_name: str,
+    db: Session = Depends(get_db)
+) -> Dict[str, str]:
+    """获取任务日志文件内容。"""
+    allowed_logs = {
+        'generation_stdout': 'generation_stdout.log',
+        'generation_stderr': 'generation_stderr.log',
+        'evaluation_stdout': 'evaluation_stdout.log',
+        'evaluation_stderr': 'evaluation_stderr.log',
+        'ducc_execution': 'ducc_execution.log',
+    }
+    if log_name not in allowed_logs:
+        raise HTTPException(status_code=400, detail="不支持的日志类型")
+
+    service = BatchService(db)
+    task = service.get_batch_task(batch_id, instance_id)
+    if not task:
+        raise HTTPException(
+            status_code=404,
+            detail=f"批次 {batch_id} 中不存在实例 {instance_id} 的任务"
+        )
+    if not task.output_dir:
+        raise HTTPException(status_code=404, detail="该任务没有输出目录")
+
+    log_path = os.path.join(task.output_dir, allowed_logs[log_name])
+    if not os.path.exists(log_path):
+        raise HTTPException(status_code=404, detail=f"日志文件不存在: {allowed_logs[log_name]}")
+
+    try:
+        with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
+            return {"content": f.read()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"读取日志失败: {str(e)}")
 
 
 @router.get("/{batch_id}/tasks/{instance_id}/patch-content")

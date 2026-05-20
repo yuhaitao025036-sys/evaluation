@@ -48,6 +48,12 @@ export default function Sidebar() {
     navigate(key)
   }
 
+  const selectedKey = (() => {
+    if (location.pathname === '/batches/create') return '/batches/create'
+    if (location.pathname.startsWith('/batches')) return '/batches'
+    return location.pathname
+  })()
+
   return (
     <Sider width={200} theme="dark">
       <div
@@ -64,7 +70,7 @@ export default function Sidebar() {
       </div>
       <Menu
         mode="inline"
-        selectedKeys={[location.pathname]}
+        selectedKeys={[selectedKey]}
         style={{ height: '100%', borderRight: 0 }}
         items={items}
         onClick={handleMenuClick}

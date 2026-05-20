@@ -2,27 +2,48 @@ export interface Dataset {
   id: number
   name: string
   description: string | null
+  file_name?: string
+  file_path?: string
+  format?: string
+  file_size?: number
+  total_instances?: number
+  imported_instances?: number
+  last_scanned_at?: string | null
   created_at: string
-  updated_at: string
-  instance_count?: number
+  updated_at?: string
 }
 
 export interface DatasetInstance {
   id: number
   dataset_id: number
   instance_id: string
+  repo_language?: string | null
   data: Record<string, any>
   created_at: string
-  updated_at: string
+  updated_at?: string
+}
+
+export interface ScriptArgument {
+  name: string
+  cli_name: string
+  type: 'string' | 'int' | 'float' | 'boolean' | 'choice'
+  required?: boolean
+  default?: any
+  help?: string | null
+  choices?: string[] | null
+  action?: string | null
 }
 
 export interface Script {
   id: number
-  name: string
+  name?: string
+  file_name?: string
   description: string | null
   file_path: string
+  argument_schema?: ScriptArgument[]
+  last_scanned_at?: string | null
   created_at: string
-  updated_at: string
+  updated_at?: string
 }
 
 export interface TaskGroup {
@@ -113,25 +134,111 @@ export interface TaskGroupStats {
   success_rate: number
 }
 
-export interface ComparisonResult {
-  instance_id: string
-  baseline_result: Record<string, any> | null
-  comparison_results: Record<string, Record<string, any> | null>
-  diff_summary: Record<string, any>
+export interface ComparisonMetadataBatch {
+  id: number
+  batch_name: string
+  dataset_id: number | null
+  model: string
+  tag: string
+  status: string
+  total_tasks: number
+  completed_tasks: number
+  failed_tasks: number
 }
 
-export interface ModelComparisonSummary {
-  total_instances: number
-  compared_instances: number
+export interface ComparisonMetadata {
   models: string[]
-  metrics: Record<string, any>
+  tags: string[]
+  datasets: Array<{ id: number; name: string }>
+  batches: ComparisonMetadataBatch[]
 }
 
-export interface TagComparisonSummary {
-  total_instances: number
-  compared_instances: number
+export interface CompareBatchesRequest {
+  batch_ids: number[]
+  include_instances?: boolean
+  instance_limit?: number
+  only_common_instances?: boolean
+}
+
+export interface CompareByModelsRequest {
+  models: string[]
+  dataset_id?: number
+  tag?: string
+  include_instances?: boolean
+  instance_limit?: number
+  only_common_instances?: boolean
+}
+
+export interface CompareByTagsRequest {
   tags: string[]
-  metrics: Record<string, any>
+  dataset_id?: number
+  model?: string
+  include_instances?: boolean
+  instance_limit?: number
+  only_common_instances?: boolean
+}
+
+export interface CompareInstanceRequest {
+  instance_id: string
+  batch_ids?: number[]
+  models?: string[]
+  tags?: string[]
+  dataset_id?: number
+}
+
+export interface ComparisonRunSummary {
+  key: string
+  batch_id: number | null
+  batch_name: string | null
+  model: string
+  tag: string
+  dataset_id: number | null
+  total: number
+  completed: number
+  failed: number
+  validation_success: number
+  validation_failure: number
+  validation_unknown: number
+  accuracy: number | null
+  evaluation_success_rate: number | null
+  test_pass_rate: number | null
+  avg_duration_seconds: number | null
+}
+
+export interface ComparisonInstanceCell {
+  batch_id: number
+  batch_name: string
+  model: string
+  tag: string
+  status: string
+  validation_success: boolean | null
+  tests_passed: number
+  tests_failed: number
+  tests_total: number
+  duration_seconds: number | null
+  has_patch: boolean
+  result_summary: Record<string, any> | null
+}
+
+export interface ComparisonInstanceRow {
+  instance_id: string
+  outcome: string
+  results: Record<string, ComparisonInstanceCell | null>
+}
+
+export interface ComparisonResponse {
+  mode: 'batches' | 'models' | 'tags'
+  keys: string[]
+  summaries: Record<string, ComparisonRunSummary>
+  compared_instances: number
+  total_union_instances: number
+  common_instances: number
+  instance_rows: ComparisonInstanceRow[]
+}
+
+export interface InstanceComparisonResponse {
+  instance_id: string
+  results: ComparisonInstanceCell[]
 }
 
 // ============================================================================
@@ -213,7 +320,9 @@ export interface BatchResult {
   // 输出文件
   patch_path: string | null
   output_dir: string
-  
+  trace_file_path?: string | null
+  validation_detail_path?: string | null
+
   // 错误信息
   error_message: string | null
   
@@ -228,14 +337,33 @@ export interface BatchStats {
   batch_id: number
   batch_name: string
   status: string
+  effective_status: string
+  outcome: string
   total_tasks: number
   pending_tasks: number
   queued_tasks: number
   running_tasks: number
+  retrying_tasks: number
   completed_tasks: number
   failed_tasks: number
+  active_tasks: number
+  terminal_tasks: number
+  completion_rate: number
+  task_success_rate: number
+  task_failure_rate: number
   success_rate: number
+  failure_rate: number
+  validation_success_count: number
+  validation_failure_count: number
+  validation_unknown_count: number
   validation_success_rate: number | null
+  validation_failure_rate: number | null
+  evaluation_success_rate: number
+  evaluation_failure_rate: number
+  tests_passed: number
+  tests_failed: number
+  tests_total: number
+  test_pass_rate: number | null
   avg_duration: number | null
   total_duration: number | null
 }

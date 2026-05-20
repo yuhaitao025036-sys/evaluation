@@ -1,430 +1,261 @@
 # 脚本接口规范
 
-本文档定义了 DUCC 评估系统的脚本接口标准，所有评估脚本必须遵循此规范。
+本文档定义当前 DUCC 评估系统的脚本接口。所有被系统扫描和执行的评估脚本都必须遵循这个单实例接口。
 
-## 设计理念
+## 设计原则
 
-- **单任务执行**：每次脚本调用只处理一个实例，系统负责任务调度和并发控制
-- **约定优于配置**：通过标准化接口减少配置复杂度
-- **完全解耦**：脚本独立于系统，可单独测试和运行
-- **灵活扩展**：支持脚本自定义参数，满足不同评估需求
+- **单实例执行**：worker 每次只调用脚本处理一个 `dataset_instances` 实例。
+- **系统负责调度**：批次拆分、并发、重试和状态流转由 DUCC 后端负责，脚本不要再做批量调度。
+- **显式输入**：worker 会把当前实例写成 JSON，并通过 `--instance-data-path` 传给脚本。
+- **标准输出**：脚本必须把 `task_summary.json` 直接写到 `--output-dir` 根目录。
+- **可扩展参数**：脚本自定义参数通过 `argparse.add_argument` 暴露，扫描后在批次创建页展示。
 
-> **重要变更说明**：从 v2.0 开始，脚本不再负责循环处理数据范围，改为由系统调度单个任务。这使得系统可以实现细粒度的并发控制、失败重试和任务优先级管理。
+## 脚本位置与扫描
 
----
+默认脚本目录：
 
-## 必需参数（系统自动传递）
-
-脚本**必须**支持以下命令行参数：
-
-### `--instance-id <string>`
-- **说明**：要处理的数据集实例 ID
-- **类型**：字符串
-- **示例**：`django__django-11099` 或 `requests__requests-1234`
-- **用途**：脚本根据此 ID 从数据集中加载对应实例并处理
-- **重要**：脚本每次只处理一个实例，不再使用索引范围
-
-### `--output-dir <path>`
-- **说明**：任务输出目录的完整路径
-- **类型**：字符串
-- **示例**：`/path/to/evaluation/data/outputs/batch_1/tasks/django__django-11099`
-- **用途**：脚本将所有输出写入此目录
-- **注意**：系统会为每个任务自动分配独立的输出目录
-
-### `--model <string>`
-- **说明**：使用的模型标识符
-- **类型**：字符串
-- **示例**：`gpt-4-turbo`、`claude-3.5-sonnet`
-- **用途**：指定评估使用的 AI 模型
-
-### `--tag <string>`
-- **说明**：批次标签
-- **类型**：字符串
-- **示例**：`baseline`、`experiment_1`
-- **用途**：用于区分不同实验配置
-
----
-
-## 可选参数（用户自定义）
-
-脚本可以定义自己的参数，通过批次创建时的 `execution_config` 传递：
-
-### 推荐的标准可选参数
-
-```bash
---timeout <int>           # 超时时间（秒），默认 1800
---use-tmux                # 启用 tmux 模式（可实时查看执行过程）
---validate                # 启用验证（运行测试）
---no-validate             # 禁用验证
---effort <string>         # 执行力度：low|medium|high
---temperature <float>     # 模型温度参数
+```text
+data/scripts
 ```
 
-### 示例：创建批次时传递自定义参数
+脚本扫描接口只扫描该目录下的直接 `.py` 文件，不递归扫描子目录。因此：
 
-```bash
-curl -X POST http://localhost:8000/api/v1/batches \
-  -H "Content-Type: application/json" \
-  -d '{
-    "batch_name": "baseline_run_1",
-    "dataset_id": 1,
-    "model": "gpt-4-turbo",
-    "tag": "baseline",
-    "execution_config": {
-      "use_tmux": true,
-      "timeout": 1800,
-      "temperature": 0.7
-    }
-  }'
+- 可运行入口脚本应放在 `data/scripts/*.py`。
+- 依赖文件夹可以放在 `data/scripts/<helper_dir>/`，不会被注册成独立脚本。
+
+扫描接口：
+
+```http
+POST /api/v1/scripts/scan
 ```
 
-系统最终调用（针对每个实例）：
+## 系统自动传入参数
+
+脚本必须能接收以下参数：
+
 ```bash
-python script.py \
-    --instance-id "django__django-11099" \
-    --output-dir /path/to/outputs/batch_1/tasks/django__django-11099 \
-    --model gpt-4-turbo \
-    --tag baseline \
-    --use-tmux --timeout 1800 --temperature 0.7
+--instance-id <string>
+--instance-data-path <path>
+--dataset-id <int>
+--dataset-name <string>
+--dataset-path <path>
+--output-dir <path>
+--model <string>
+--tag <string>
 ```
 
----
+说明：
 
-## 脚本约定规则
+| 参数 | 说明 |
+|------|------|
+| `--instance-id` | 当前实例 ID |
+| `--instance-data-path` | worker 生成的当前实例 JSON 文件 |
+| `--dataset-id` | 数据集数据库 ID |
+| `--dataset-name` | 数据集名称 |
+| `--dataset-path` | 原始数据集文件路径，供外部评测器使用 |
+| `--output-dir` | 当前任务输出目录，已是单实例目录 |
+| `--model` | 批次选择的模型，当前主要来自 Ducc Agent，后续可映射到千帆等平台模型 |
+| `--tag` | 批次标签，用于区分实验 |
 
-### 1. 可执行性
-- 脚本必须是可执行的 Python 文件
-- 文件开头包含 shebang：`#!/usr/bin/env python3`
-- 设置执行权限：`chmod +x script.py`
+这些系统参数会被 `backend/app/utils/script_argument_parser.py` 过滤，不会展示为用户可配置参数。
 
-### 2. 参数解析
+## 推荐参数解析模板
+
 ```python
 import argparse
 
-parser = argparse.ArgumentParser(description='评估脚本')
+parser = argparse.ArgumentParser(description="DUCC evaluation script")
 
-# 必需参数
-parser.add_argument('--instance-id', required=True, help='实例 ID')
-parser.add_argument('--output-dir', required=True, help='输出目录')
-parser.add_argument('--model', required=True, help='模型标识符')
-parser.add_argument('--tag', required=True, help='批次标签')
+parser.add_argument("--instance-id", required=True)
+parser.add_argument("--instance-data-path")
+parser.add_argument("--dataset-id")
+parser.add_argument("--dataset-name")
+parser.add_argument("--dataset-path")
+parser.add_argument("--output-dir", required=True)
+parser.add_argument("--model", required=True)
+parser.add_argument("--tag", required=True)
 
-# 自定义参数
-parser.add_argument('--timeout', type=int, default=1800)
-parser.add_argument('--use-tmux', action='store_true')
+# 用户可配置参数
+parser.add_argument("--timeout", type=int, default=1800)
+parser.add_argument("--enable-eval", action="store_true")
 
 args = parser.parse_args()
 ```
 
-### 3. 数据加载
-脚本需要自行实现根据 `instance_id` 加载数据的逻辑：
-```python
-def load_instance_by_id(dataset_path, instance_id):
-    """从数据集中加载指定实例"""
-    import pandas as pd
-    df = pd.read_parquet(dataset_path)
-    instance = df[df['instance_id'] == instance_id]
-    
-    if instance.empty:
-        raise ValueError(f"Instance {instance_id} not found")
-    
-    return instance.iloc[0].to_dict()
-```
+## 数据加载规范
 
-**注意**：数据集路径可以通过环境变量或配置文件传递，不再作为命令行参数。
-
-### 4. 输出要求
-- **所有输出必须写入** `--output-dir` 指定的目录
-- **不要硬编码输出路径**
-- 遵循[输出目录结构规范](output-structure.md)
-- **必须输出** `task_summary.json` 文件（系统用于解析结果）
-
-### 5. 错误处理
-- 脚本执行成功时返回退出码 `0`
-- 脚本执行失败时返回非零退出码
-```python
-import sys
-
-try:
-    # 执行评估
-    result = evaluate(args)
-    sys.exit(0)  # 成功
-except Exception as e:
-    print(f"Error: {e}", file=sys.stderr)
-    sys.exit(1)  # 失败
-```
-
-### 6. 进度报告
-脚本应输出状态信息到 stdout，便于监控：
-```python
-print(f"Loading instance {instance_id}...")
-print(f"Running model {model}...")
-print(f"✓ Instance {instance_id} completed")
-```
-
----
-
-## 完整示例脚本模板
+推荐优先读取 `--instance-data-path`：
 
 ```python
-#!/usr/bin/env python3
-"""
-评估脚本模板 - 单任务执行模式
-
-遵循 DUCC 评估系统脚本接口规范 v2.0
-"""
-import argparse
 import json
-import os
-import sys
-from pathlib import Path
 
-# 数据集路径配置（可通过环境变量或配置文件管理）
-DATASET_BASE_PATH = os.getenv('DUCC_DATASET_PATH', '/path/to/datasets')
+with open(args.instance_data_path, "r", encoding="utf-8") as f:
+    payload = json.load(f)
 
-def load_instance_by_id(dataset_name, instance_id):
-    """从数据集中加载指定实例"""
-    import pandas as pd
-    
-    dataset_path = os.path.join(DATASET_BASE_PATH, f"{dataset_name}.parquet")
-    df = pd.read_parquet(dataset_path)
-    
-    instance = df[df['instance_id'] == instance_id]
-    if instance.empty:
-        raise ValueError(f"Instance {instance_id} not found in {dataset_name}")
-    
-    return instance.iloc[0].to_dict()
-
-def evaluate_instance(instance, args):
-    """评估单个实例
-    
-    Args:
-        instance: 数据集实例（字典格式）
-        args: 命令行参数
-        
-    Returns:
-        评估结果（字典格式）
-    """
-    instance_id = instance['instance_id']
-    
-    print(f"Evaluating instance: {instance_id}")
-    print(f"Model: {args.model}")
-    print(f"Tag: {args.tag}")
-    
-    # ========================================
-    # 在这里实现你的评估逻辑
-    # ========================================
-    
-    # 示例：调用 AI 模型生成补丁
-    # patch = generate_patch(instance, args.model)
-    # success = validate_patch(patch, instance)
-    
-    # 模拟评估结果
-    result = {
-        'instance_id': instance_id,
-        'model': args.model,
-        'tag': args.tag,
-        'status': 'completed',
-        'duration_seconds': 123.45,
-        'patch_generated': True,
-        'validation': {
-            'success': True,
-            'tests_passed': 10,
-            'tests_failed': 0,
-            'tests_total': 10
-        }
-    }
-    
-    return result
-
-def save_outputs(result, output_dir):
-    """保存评估输出
-    
-    必须保存的文件：
-    - task_summary.json: 评估结果摘要（系统解析）
-    
-    推荐保存的文件：
-    - extracted_patch.diff: 生成的补丁文件
-    - execution_trace.jsonl: 执行过程记录
-    - validation_detail.json: 详细的验证结果
-    """
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # 1. 必需：保存任务摘要
-    summary_path = os.path.join(output_dir, 'task_summary.json')
-    with open(summary_path, 'w') as f:
-        json.dump(result, f, indent=2)
-    
-    # 2. 推荐：保存生成的补丁
-    if result.get('patch_generated'):
-        patch_path = os.path.join(output_dir, 'extracted_patch.diff')
-        with open(patch_path, 'w') as f:
-            f.write("# Patch content here\n")
-    
-    # 3. 推荐：保存验证详情
-    validation_path = os.path.join(output_dir, 'validation_detail.json')
-    with open(validation_path, 'w') as f:
-        json.dump(result['validation'], f, indent=2)
-    
-    print(f"✓ Outputs saved to {output_dir}")
-
-def main():
-    parser = argparse.ArgumentParser(description='DUCC 评估脚本')
-    
-    # 必需参数（系统传递）
-    parser.add_argument('--instance-id', required=True, help='实例 ID')
-    parser.add_argument('--output-dir', required=True, help='输出目录')
-    parser.add_argument('--model', required=True, help='模型标识符')
-    parser.add_argument('--tag', required=True, help='批次标签')
-    
-    # 自定义参数
-    parser.add_argument('--dataset', default='swebench-lite', help='数据集名称')
-    parser.add_argument('--timeout', type=int, default=1800, help='超时时间（秒）')
-    parser.add_argument('--use-tmux', action='store_true', help='使用 tmux 模式')
-    
-    args = parser.parse_args()
-    
-    try:
-        print(f"=" * 60)
-        print(f"DUCC Evaluation Script")
-        print(f"Instance: {args.instance_id}")
-        print(f"Model: {args.model}")
-        print(f"Tag: {args.tag}")
-        print(f"=" * 60)
-        
-        # 1. 加载数据集实例
-        print(f"\n[1/3] Loading instance...")
-        instance = load_instance_by_id(args.dataset, args.instance_id)
-        print(f"✓ Instance loaded")
-        
-        # 2. 执行评估
-        print(f"\n[2/3] Running evaluation...")
-        result = evaluate_instance(instance, args)
-        print(f"✓ Evaluation completed")
-        
-        # 3. 保存输出
-        print(f"\n[3/3] Saving outputs...")
-        save_outputs(result, args.output_dir)
-        
-        print(f"\n{'=' * 60}")
-        print(f"✓ SUCCESS")
-        print(f"Status: {result['status']}")
-        print(f"Validation: {result['validation']['success']}")
-        print(f"{'=' * 60}\n")
-        
-        sys.exit(0)
-        
-    except Exception as e:
-        print(f"\n{'=' * 60}")
-        print(f"✗ FAILED")
-        print(f"Error: {e}")
-        print(f"{'=' * 60}\n")
-        
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-
-if __name__ == '__main__':
-    main()
+instance = payload["data"]
 ```
 
----
+`input_instance.json` 结构：
 
-## 测试脚本
+```json
+{
+  "dataset_id": 1,
+  "dataset_name": "swe_bench_pro_test_python",
+  "dataset_file_path": "/path/to/dataset.parquet",
+  "dataset_instance_id": 123,
+  "instance_id": "django__django-11099",
+  "data": {
+    "instance_id": "django__django-11099",
+    "problem_statement": "..."
+  }
+}
+```
 
-在集成到系统之前，可以单独测试脚本：
+如果接入外部评测器确实需要全量数据集文件，可以使用 `--dataset-path`，但不要在普通脚本中自行扫描整个数据集来决定处理范围。
+
+## 自定义参数
+
+脚本可以定义自己的参数，例如：
+
+```python
+parser.add_argument("--timeout", type=int, default=1800, help="执行超时时间")
+parser.add_argument("--use-tmux", action="store_true", help="启用 tmux 模式")
+parser.add_argument("--dockerhub-username", help="Docker Hub 用户名")
+```
+
+系统扫描脚本后会提取这些参数并在批次创建页展示。批次创建时填写的值会通过 `execution_config` 传给脚本。
+
+## 输出规范
+
+worker 传入的 `--output-dir` 已经是当前任务目录。脚本必须直接写：
+
+```text
+<output-dir>/task_summary.json
+```
+
+推荐同时写：
+
+```text
+<output-dir>/extracted_patch.diff
+<output-dir>/execution_trace.jsonl
+<output-dir>/validation_detail.json
+<output-dir>/dataset_info.json
+```
+
+不要把必需文件写到额外的 `tasks/<instance_id>/` 子目录。外部工具自己的原始输出可以放到：
+
+```text
+<output-dir>/external_raw/
+```
+
+但脚本或 wrapper 必须把 DUCC 需要解析的文件归一化到 `--output-dir` 根目录。
+
+## `task_summary.json` 最小结构
+
+```json
+{
+  "instance_id": "django__django-11099",
+  "model": "Claude Sonnet 4.6",
+  "tag": "baseline",
+  "status": "completed",
+  "duration_seconds": 123.45,
+  "patch_generated": true,
+  "timestamp": "2026-05-19T10:30:00Z",
+  "validation": {
+    "success": true,
+    "tests_passed": 10,
+    "tests_failed": 0,
+    "tests_total": 10,
+    "error_message": null
+  }
+}
+```
+
+失败时：
+
+```json
+{
+  "instance_id": "django__django-11099",
+  "model": "Claude Sonnet 4.6",
+  "tag": "baseline",
+  "status": "failed",
+  "duration_seconds": 60.0,
+  "patch_generated": false,
+  "timestamp": "2026-05-19T10:30:00Z",
+  "error": "clear error message"
+}
+```
+
+脚本退出码规则：
+
+- 基础设施或脚本执行失败：非 0。
+- 正常生成结果但评测未通过：建议退出 0，并在 `validation.success=false` 中表达未通过。
+- 如果 wrapper 调用外部评测器，不能只用外部评测器退出码判断 DUCC 任务失败；应解析评测结果。
+
+## 外部评测器 wrapper 规范
+
+如果接入已有工程（例如 SWE-bench Pro），不要直接把外部 batch shell 注册成 DUCC 脚本。正确方式：
+
+1. 把外部运行依赖复制到 `data/scripts/<external_runtime>/`，不要移动原始目录。
+2. 在 `data/scripts` 根目录新增一个 DUCC wrapper `.py`。
+3. wrapper 每次只处理当前 `--instance-id`。
+4. wrapper 调用外部单实例脚本。
+5. wrapper 把外部输出复制/转换为 DUCC 输出规范。
+
+SWE-bench Pro 示例入口：
+
+```text
+data/scripts/ducc_swebench_pro_wrapper.py
+```
+
+旧命令映射：
+
+```text
+run_batch_by_ids.sh --ids-file       -> DUCC 批次 instance_ids
+run_batch_by_ids.sh --parallel       -> DUCC 批次/worker 并发
+run_batch_by_ids.sh --model          -> DUCC 批次 model
+run_batch_by_ids.sh --enable-eval    -> wrapper 参数 --enable-eval
+run_batch_by_ids.sh --dataset-path   -> DUCC dataset 扫描导入后由 worker 传 --dataset-path
+run_batch_by_ids.sh --scripts-dir    -> wrapper 参数 --scripts-dir
+```
+
+## 单独测试脚本
 
 ```bash
-# 测试单个实例
-python my_script.py \
-    --instance-id "django__django-11099" \
-    --output-dir ./test_output \
-    --model gpt-4-turbo \
-    --tag baseline
-
-# 检查输出
-ls -R ./test_output/
-cat ./test_output/task_summary.json
-cat ./test_output/extracted_patch.diff
+python data/scripts/example_script.py \
+  --instance-id "django__django-11099" \
+  --instance-data-path ./test_output/input_instance.json \
+  --dataset-id 1 \
+  --dataset-name swe_bench_pro_test_python \
+  --dataset-path ./data/datasets/swe_bench_pro_test_python.parquet \
+  --output-dir ./test_output \
+  --model "Claude Sonnet 4.6" \
+  --tag smoke
 ```
 
----
+检查：
 
-## 常见问题
-
-### Q: 脚本如何知道数据集路径？
-A: 有几种方式：
-1. 通过环境变量设置基础路径：`export DUCC_DATASET_PATH=/path/to/datasets`
-2. 在脚本内部配置文件中指定
-3. 作为可选参数 `--dataset` 传递数据集名称，脚本组装完整路径
-
-### Q: 为什么改用单任务执行而不是范围处理？
-A: 单任务执行使系统可以：
-- 实现细粒度并发控制（控制总并发数、批次并发数）
-- 支持任务级别的失败重试
-- 提供实时的任务状态更新
-- 支持任务优先级调度
-- 更好的资源管理和监控
-
-### Q: 脚本可以访问网络吗？
-A: 可以，脚本独立运行，没有网络限制。
-
-### Q: 如何调试脚本？
-A: 
-1. 使用单个实例 ID 测试：`--instance-id "test-instance-1"`
-2. 查看 stdout/stderr 输出
-3. 检查输出目录的 `task_summary.json` 内容
-4. 使用 `--use-tmux` 实时查看执行过程
-
-### Q: 脚本执行失败会自动重试吗？
-A: 是的，系统会根据批次配置的 `max_retries` 自动重试失败的任务。脚本本身无需处理重试逻辑。
-
----
-
-## 从旧接口迁移
-
-如果你有使用旧接口（v1.0）的脚本，需要进行以下修改：
-
-### 参数变更
-
-| 旧参数 | 新参数 | 说明 |
-|--------|--------|------|
-| `--dataset-path` | 移除 | 脚本内部管理数据集路径 |
-| `--start-index` | 移除 | 不再循环处理 |
-| `--end-index` | 移除 | 不再循环处理 |
-| - | `--instance-id` | **新增**：指定要处理的实例 |
-| - | `--model` | **新增**：模型标识符 |
-| - | `--tag` | **新增**：批次标签 |
-
-### 代码结构变更
-
-**旧代码（v1.0）**：
-```python
-# 脚本负责循环
-instances = load_dataset(args.dataset_path, args.start_index, args.end_index)
-for instance in instances:
-    result = evaluate(instance)
+```bash
+python -m json.tool ./test_output/task_summary.json
+ls ./test_output
 ```
 
-**新代码（v2.0）**：
-```python
-# 脚本只处理单个实例
-instance = load_instance_by_id(args.instance_id)
-result = evaluate(instance)
-```
+## 迁移旧脚本
 
----
+旧脚本需要做这些修改：
 
-## 相关文档
+1. 移除 `--start-index` / `--end-index` / `--ids-file` 等批量处理入口。
+2. 增加并接收所有系统参数。
+3. 从 `--instance-data-path` 读取当前实例。
+4. 每次只处理一个实例。
+5. 把 `task_summary.json` 直接写到 `--output-dir`。
+6. 把并发控制交给 DUCC，不要在脚本里再启动自己的批量并发。
 
-- [数据集格式规范](dataset-format.md)
-- [输出目录结构规范](output-structure.md)
-- [对比功能使用指南](comparison-requirements.md)
-- [任务调度与并发控制](task-scheduling-and-concurrency.md)
-- [示例脚本](../../data/scripts/example_script.py)
+## 相关文件
 
----
-
-**版本**: v2.0  
-**更新日期**: 2026-05-14  
-**重要变更**: 从范围处理模式改为单任务执行模式
+- `backend/app/workers/task_worker.py`
+- `backend/app/utils/script_argument_parser.py`
+- `data/scripts/example_script.py`
+- `data/scripts/ducc_swebench_pro_wrapper.py`
+- `.agents/rules/dataset-format.md`
+- `.agents/rules/output-structure.md`

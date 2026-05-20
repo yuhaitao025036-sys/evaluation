@@ -2,41 +2,52 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, TypedDict
 import pandas as pd
 from app.models import Dataset, DatasetInstance
 from app.config import settings
 import json
 
 
+class DatasetScanResult(TypedDict):
+    newly_registered: List[Dataset]
+    skipped_existing: int
+    scanned_files: int
+
+
 class DatasetService:
     """Service for managing datasets"""
     
     @staticmethod
-    def scan_datasets_folder(db: Session) -> List[Dataset]:
+    def scan_datasets_folder(db: Session) -> DatasetScanResult:
         """
         Scan datasets folder and register new datasets
-        
+
         Returns:
-            List of newly registered datasets
+            Scan result with newly registered datasets and skipped count
         """
         datasets_dir = Path(settings.DATASETS_DIR)
         if not datasets_dir.exists():
             raise FileNotFoundError(f"Datasets directory not found: {datasets_dir}")
         
         newly_registered = []
-        
+        skipped_existing = 0
+        scanned_files = 0
+
         # Scan for supported file formats
         for file_path in datasets_dir.glob("*"):
             if file_path.suffix not in ['.parquet', '.csv', '.json', '.jsonl']:
                 continue
-            
+
+            scanned_files += 1
+
             # Check if already registered
             existing = db.query(Dataset).filter(
                 Dataset.file_path == str(file_path)
             ).first()
-            
+
             if existing:
+                skipped_existing += 1
                 continue
             
             # Get file info
@@ -63,7 +74,11 @@ class DatasetService:
             
             newly_registered.append(dataset)
         
-        return newly_registered
+        return {
+            "newly_registered": newly_registered,
+            "skipped_existing": skipped_existing,
+            "scanned_files": scanned_files,
+        }
     
     @staticmethod
     def _count_instances(file_path: Path, file_format: str) -> int:

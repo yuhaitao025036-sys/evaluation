@@ -87,17 +87,38 @@ class BatchStats(BaseModel):
     batch_id: int
     batch_name: str
     status: str
-    
+    effective_status: str
+    outcome: str
+
     total_tasks: int
     pending_tasks: int
     queued_tasks: int
     running_tasks: int
+    retrying_tasks: int
     completed_tasks: int
     failed_tasks: int
-    
-    success_rate: float = Field(description="完成率")
-    validation_success_rate: Optional[float] = Field(None, description="验证通过率")
-    
+    active_tasks: int
+    terminal_tasks: int
+
+    completion_rate: float = Field(description="任务结束进度")
+    task_success_rate: float = Field(description="执行成功率")
+    task_failure_rate: float = Field(description="执行失败率")
+    success_rate: float = Field(description="兼容字段，等同执行成功率")
+    failure_rate: float = Field(description="兼容字段，等同执行失败率")
+
+    validation_success_count: int
+    validation_failure_count: int
+    validation_unknown_count: int
+    validation_success_rate: Optional[float] = Field(None, description="已完成任务中的验证通过率")
+    validation_failure_rate: Optional[float] = Field(None, description="已完成任务中的验证失败率")
+    evaluation_success_rate: float = Field(description="总任务中的评测通过率")
+    evaluation_failure_rate: float = Field(description="总任务中的评测失败率")
+
+    tests_passed: int
+    tests_failed: int
+    tests_total: int
+    test_pass_rate: Optional[float] = Field(None, description="测试通过率")
+
     avg_duration: Optional[float] = Field(None, description="平均耗时（秒）")
     total_duration: Optional[float] = Field(None, description="总耗时（秒）")
 
@@ -178,6 +199,11 @@ class BatchRetryRequest(BaseModel):
     reset_retry_count: bool = Field(True, description="重置重试计数")
 
 
+class BatchTaskRerunRequest(BaseModel):
+    """强制重跑单个子任务请求"""
+    reset_retry_count: bool = Field(True, description="重置重试计数")
+
+
 class BatchAddTasksRequest(BaseModel):
     """向批次追加任务请求"""
     instance_ids: Optional[List[str]] = Field(None, description="指定实例 ID 列表")
@@ -232,6 +258,7 @@ class ScriptResponse(BaseModel):
     file_name: str
     file_path: str
     description: Optional[str]
+    argument_schema: Optional[List[Dict[str, Any]]] = None
     last_scanned_at: datetime
     created_at: datetime
     

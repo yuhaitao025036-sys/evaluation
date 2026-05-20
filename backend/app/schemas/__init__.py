@@ -1,19 +1,23 @@
 """Pydantic schemas for API requests and responses"""
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 from app.schemas.batch import (
     BatchCreate, BatchUpdate, BatchResponse, BatchStats,
     BatchResultResponse, BatchResultUpdate,
-    BatchStartRequest, BatchPauseRequest, BatchRetryRequest, BatchAddTasksRequest,
+    BatchStartRequest, BatchPauseRequest, BatchRetryRequest, BatchTaskRerunRequest, BatchAddTasksRequest,
     MessageResponse, ErrorResponse, PaginatedResponse,
     DatasetResponse, DatasetInstanceResponse, ScriptResponse,
 )
 
 
+class SchemaBaseModel(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+
 # Dataset schemas
-class DatasetBase(BaseModel):
+class DatasetBase(SchemaBaseModel):
     name: str
     description: Optional[str] = None
 
@@ -48,6 +52,7 @@ class ScriptBase(BaseModel):
 class Script(ScriptBase):
     id: int
     file_path: str
+    argument_schema: Optional[List[Dict[str, Any]]] = None
     last_scanned_at: Optional[datetime] = None
     created_at: datetime
 
@@ -56,7 +61,7 @@ class Script(ScriptBase):
 
 
 # Task Group schemas
-class TaskGroupCreate(BaseModel):
+class TaskGroupCreate(SchemaBaseModel):
     name: str
     description: Optional[str] = None
     dataset_id: int
@@ -71,7 +76,7 @@ class TaskGroupCreate(BaseModel):
     end_index: Optional[int] = None
 
 
-class TaskGroup(BaseModel):
+class TaskGroup(SchemaBaseModel):
     id: int
     name: str
     description: Optional[str] = None
@@ -109,7 +114,7 @@ class TaskGroupWithDetails(TaskGroup):
 
 
 # Task Instance schemas
-class TaskInstance(BaseModel):
+class TaskInstance(SchemaBaseModel):
     id: int
     task_id: int
     instance_id: str
@@ -133,55 +138,130 @@ class TaskInstance(BaseModel):
 
 
 # Comparison schemas
-class CompareModelsRequest(BaseModel):
-    model_ids: List[str] = Field(..., description="List of model IDs to compare")
-    tag: str = Field(..., description="Tag to compare across models")
+class CompareBatchesRequest(SchemaBaseModel):
+    batch_ids: List[int] = Field(..., min_length=2, description="Batch IDs to compare")
+    include_instances: bool = True
+    instance_limit: int = Field(default=200, ge=1, le=2000)
+    only_common_instances: bool = True
+
+
+class CompareByModelsRequest(SchemaBaseModel):
+    models: List[str] = Field(..., min_length=2, description="Model IDs to compare")
     dataset_id: Optional[int] = None
+    tag: Optional[str] = None
+    include_instances: bool = True
+    instance_limit: int = Field(default=200, ge=1, le=2000)
+    only_common_instances: bool = True
 
 
-class CompareTagsRequest(BaseModel):
-    tags: List[str] = Field(..., description="List of tags to compare")
-    model_id: Optional[str] = None
+class CompareByTagsRequest(SchemaBaseModel):
+    tags: List[str] = Field(..., min_length=2, description="Tags to compare")
     dataset_id: Optional[int] = None
+    model: Optional[str] = None
+    include_instances: bool = True
+    instance_limit: int = Field(default=200, ge=1, le=2000)
+    only_common_instances: bool = True
 
 
-class InstanceComparisonRequest(BaseModel):
+class CompareInstanceRequest(SchemaBaseModel):
     instance_id: str
+    batch_ids: Optional[List[int]] = None
+    models: Optional[List[str]] = None
     tags: Optional[List[str]] = None
-    model_ids: Optional[List[str]] = None
+    dataset_id: Optional[int] = None
 
 
-# Comparison response schemas
-class TaskInstanceComparison(BaseModel):
-    instance_id: str
-    results_by_model: Optional[Dict[str, Any]] = None
-    results_by_tag: Optional[Dict[str, Any]] = None
+class ComparisonDatasetOption(SchemaBaseModel):
+    id: int
+    name: str
 
 
-class ModelComparisonResult(BaseModel):
+class ComparisonBatchOption(SchemaBaseModel):
+    id: int
+    batch_name: str
+    dataset_id: Optional[int] = None
+    model: str
     tag: str
-    model_ids: List[str]
-    dataset_id: Optional[int] = None
-    comparison_stats: Dict[str, Any]
-    instance_comparisons: List[Dict[str, Any]]
+    status: str
+    total_tasks: int
+    completed_tasks: int
+    failed_tasks: int
 
 
-class TagComparisonResult(BaseModel):
-    model_id: Optional[str] = None
+class ComparisonMetadata(SchemaBaseModel):
+    models: List[str]
     tags: List[str]
+    datasets: List[ComparisonDatasetOption]
+    batches: List[ComparisonBatchOption]
+
+
+class ComparisonRunSummary(SchemaBaseModel):
+    key: str
+    batch_id: Optional[int] = None
+    batch_name: Optional[str] = None
+    model: str
+    tag: str
     dataset_id: Optional[int] = None
-    comparison_stats: Dict[str, Any]
-    instance_comparisons: List[Dict[str, Any]]
+    total: int
+    completed: int
+    failed: int
+    validation_success: int
+    validation_failure: int
+    validation_unknown: int
+    accuracy: Optional[float] = None
+    evaluation_success_rate: Optional[float] = None
+    test_pass_rate: Optional[float] = None
+    avg_duration_seconds: Optional[float] = None
 
 
-class InstanceComparisonDetail(BaseModel):
+class ComparisonInstanceCell(SchemaBaseModel):
+    batch_id: int
+    batch_name: str
+    model: str
+    tag: str
+    status: str
+    validation_success: Optional[bool] = None
+    tests_passed: int
+    tests_failed: int
+    tests_total: int
+    duration_seconds: Optional[float] = None
+    has_patch: bool
+    result_summary: Optional[Dict[str, Any]] = None
+
+
+class ComparisonInstanceRow(SchemaBaseModel):
     instance_id: str
-    total_runs: int
-    results: List[Dict[str, Any]]
+    outcome: str
+    results: Dict[str, Optional[ComparisonInstanceCell]]
+
+
+class ComparisonResponse(SchemaBaseModel):
+    mode: str
+    keys: List[str]
+    summaries: Dict[str, ComparisonRunSummary]
+    compared_instances: int
+    total_union_instances: int
+    common_instances: int
+    instance_rows: List[ComparisonInstanceRow]
+
+
+class InstanceComparisonResponse(SchemaBaseModel):
+    instance_id: str
+    results: List[ComparisonInstanceCell]
+
+
+# Backward-compatible aliases for older imports
+CompareModelsRequest = CompareByModelsRequest
+CompareTagsRequest = CompareByTagsRequest
+InstanceComparisonRequest = CompareInstanceRequest
+TaskInstanceComparison = ComparisonInstanceRow
+ModelComparisonResult = ComparisonResponse
+TagComparisonResult = ComparisonResponse
+InstanceComparisonDetail = InstanceComparisonResponse
 
 
 # Task Instance response schemas
-class TaskInstanceResponse(BaseModel):
+class TaskInstanceResponse(SchemaBaseModel):
     id: int
     task_id: int
     instance_id: str
@@ -199,7 +279,7 @@ class TaskInstanceResponse(BaseModel):
         from_attributes = True
 
 
-class TaskInstanceDetail(BaseModel):
+class TaskInstanceDetail(SchemaBaseModel):
     id: int
     task_id: int
     instance_id: str
@@ -222,7 +302,7 @@ class TaskInstanceDetail(BaseModel):
 
 
 # Model info schema
-class ModelInfo(BaseModel):
+class ModelInfo(SchemaBaseModel):
     id: str
     name: str
     provider: str

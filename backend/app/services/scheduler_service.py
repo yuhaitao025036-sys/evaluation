@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_
 
 from app.models import Batch, BatchResult
+from app.services.batch_service import BatchService
 from app.workers.task_worker import execute_single_task  # Worker 函数
 
 try:
@@ -182,8 +183,9 @@ class SchedulerService:
             
             retried_count += 1
         
+        BatchService(self.db).refresh_batch_rollup(batch_id)
         self.db.commit()
-        
+
         # 如果批次正在运行，立即调度
         if batch.status == 'running':
             scheduled_count = self._schedule_pending_tasks(batch_id)
@@ -196,8 +198,88 @@ class SchedulerService:
             'scheduled_count': scheduled_count
         }
     
+    def run_single_task(self, batch_id: int, instance_id: str) -> Dict[str, Any]:
+        """只调度一个 pending 子任务，不触发批次级 pending 调度。"""
+        batch = self.db.query(Batch).filter(Batch.id == batch_id).first()
+        if not batch:
+            raise ValueError(f"批次 ID {batch_id} 不存在")
+        if batch.status == 'running':
+            raise ValueError("批次正在运行中，请先暂停批次后再单独执行子任务")
+
+        task = BatchService(self.db).get_batch_task(batch_id, instance_id)
+        if not task:
+            raise ValueError(f"批次 {batch_id} 中不存在实例 {instance_id} 的任务")
+        if task.status != 'pending':
+            raise ValueError(f"只有 pending 子任务可以单独执行，当前状态: {task.status}")
+
+        if not self._enqueue_task(task):
+            raise ValueError(task.error_message or "子任务入队失败")
+
+        return {
+            'batch_id': batch_id,
+            'task_id': task.id,
+            'instance_id': task.instance_id,
+            'status': task.status,
+            'job_id': task.job_id,
+        }
+
+    def rerun_single_task(
+        self,
+        batch_id: int,
+        instance_id: str,
+        reset_retry_count: bool = True,
+    ) -> Dict[str, Any]:
+        """强制重跑一个非 pending 子任务，不触发批次级 pending 调度。"""
+        batch = self.db.query(Batch).filter(Batch.id == batch_id).first()
+        if not batch:
+            raise ValueError(f"批次 ID {batch_id} 不存在")
+        if batch.status == 'running':
+            raise ValueError("批次正在运行中，请先暂停批次后再强制重跑子任务")
+
+        task = BatchService(self.db).get_batch_task(batch_id, instance_id)
+        if not task:
+            raise ValueError(f"批次 {batch_id} 中不存在实例 {instance_id} 的任务")
+        if task.status == 'pending':
+            raise ValueError("pending 子任务无需强制重跑，请使用执行此任务")
+        if task.status not in ('queued', 'running', 'retrying', 'completed', 'failed'):
+            raise ValueError(f"当前状态不支持强制重跑: {task.status}")
+
+        task.status = 'pending'
+        task.job_id = None
+        task.worker_id = None
+        task.queued_at = None
+        task.started_at = None
+        task.completed_at = None
+        task.duration_seconds = None
+        task.error_message = None
+        task.validation_success = None
+        task.tests_passed = 0
+        task.tests_failed = 0
+        task.tests_total = 0
+        task.result_summary = None
+        task.patch_path = None
+        task.trace_file_path = None
+        task.validation_detail_path = None
+        if reset_retry_count:
+            task.retry_count = 0
+
+        self.db.flush()
+        BatchService(self.db).refresh_batch_rollup(batch_id)
+        self.db.commit()
+
+        if not self._enqueue_task(task):
+            raise ValueError(task.error_message or "子任务入队失败")
+
+        return {
+            'batch_id': batch_id,
+            'task_id': task.id,
+            'instance_id': task.instance_id,
+            'status': task.status,
+            'job_id': task.job_id,
+        }
+
     # ========== 核心调度逻辑 ==========
-    
+
     def _schedule_pending_tasks(self, batch_id: int) -> int:
         """
         调度 pending 任务到队列
@@ -220,8 +302,8 @@ class SchedulerService:
         if batch.status != 'running':
             return 0
         
-        # 计算可调度数量
-        available_slots = batch.max_concurrency - batch.current_running
+        rollup = BatchService(self.db).refresh_batch_rollup(batch_id) or {}
+        available_slots = batch.max_concurrency - rollup.get('active_tasks', 0)
         if available_slots <= 0:
             return 0
         
@@ -257,7 +339,6 @@ class SchedulerService:
                 job = self.queue.enqueue(
                     execute_single_task,
                     task_id=task.id,
-                    timeout='2h',  # 任务超时时间
                     job_timeout='2h',
                     result_ttl=86400  # 结果保留 24 小时
                 )
@@ -266,8 +347,10 @@ class SchedulerService:
                 task.status = 'queued'
                 task.job_id = job.id
                 task.queued_at = datetime.utcnow()
+                self.db.flush()
+                BatchService(self.db).refresh_batch_rollup(task.batch_id)
                 self.db.commit()
-                
+
                 return True
             else:
                 # 同步执行（开发模式）
@@ -278,6 +361,8 @@ class SchedulerService:
             print(f"Error enqueueing task {task.id}: {e}")
             task.status = 'failed'
             task.error_message = f"入队失败: {str(e)}"
+            self.db.flush()
+            BatchService(self.db).refresh_batch_rollup(task.batch_id)
             self.db.commit()
             return False
     
@@ -314,6 +399,7 @@ class SchedulerService:
             task.queued_at = None
             cancelled_count += 1
         
+        BatchService(self.db).refresh_batch_rollup(batch_id)
         self.db.commit()
         return cancelled_count
     
@@ -336,18 +422,20 @@ class SchedulerService:
         # 1. 调度下一个任务（会自动检查批次状态）
         self._schedule_pending_tasks(batch_id)
         
-        # 2. ✅ 检查批次是否完成（重新查询确保数据最新）
+        # 2. 检查批次是否完成（以 batch_results 实时聚合为准）
         batch = self.db.query(Batch).filter(Batch.id == batch_id).first()
         if not batch:
             return
-        
-        # ✅ 严格检查：pending=0 AND queued=0 AND running=0
-        # 只有这三个都为 0 才认为批次真正完成
-        if (batch.status == 'running' and 
-            batch.pending_tasks == 0 and 
-            batch.queued_tasks == 0 and 
-            batch.running_tasks == 0):
+
+        rollup = BatchService(self.db).refresh_batch_rollup(batch_id) or {}
+        if (
+            batch.status == 'running' and
+            rollup.get('pending_tasks', 0) == 0 and
+            rollup.get('active_tasks', 0) == 0
+        ):
             batch.status = 'completed'
             batch.completed_at = datetime.utcnow()
             self.db.commit()
             print(f"[Batch {batch_id}] Completed: {batch.batch_name}")
+        else:
+            self.db.commit()

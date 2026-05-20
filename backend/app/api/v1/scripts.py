@@ -2,6 +2,7 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import func
 from pathlib import Path
 import os
 
@@ -9,6 +10,7 @@ from app.database import get_db
 from app.models import Script
 from app.schemas import Script as ScriptResponse
 from app.config import settings
+from app.utils.script_argument_parser import parse_script_arguments
 
 router = APIRouter()
 
@@ -63,26 +65,30 @@ def scan_scripts_folder(
     for script_file in scripts_dir.glob("*.py"):
         file_name = script_file.name
         file_path = str(script_file.absolute())
-        file_size = script_file.stat().st_size
-        
+        argument_schema = parse_script_arguments(script_file)
+
         # Check if already registered
         existing = db.query(Script).filter(Script.file_name == file_name).first()
         
         if existing:
-            # Update file path and scan time
+            # Update file path, arguments and scan time
             existing.file_path = file_path
+            existing.argument_schema = argument_schema
+            existing.last_scanned_at = func.now()
             updated_count += 1
             discovered_scripts.append({
                 "id": existing.id,
                 "file_name": file_name,
-                "status": "updated"
+                "status": "updated",
+                "argument_count": len(argument_schema)
             })
         else:
             # Register new script
             new_script = Script(
                 file_name=file_name,
                 file_path=file_path,
-                description=f"Evaluation script: {file_name}"
+                description=f"Evaluation script: {file_name}",
+                argument_schema=argument_schema
             )
             db.add(new_script)
             db.flush()
@@ -90,7 +96,8 @@ def scan_scripts_folder(
             discovered_scripts.append({
                 "id": new_script.id,
                 "file_name": file_name,
-                "status": "registered"
+                "status": "registered",
+                "argument_count": len(argument_schema)
             })
     
     db.commit()

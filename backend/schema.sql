@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS scripts (
     file_name VARCHAR(255) UNIQUE NOT NULL,
     file_path VARCHAR(512) NOT NULL,
     description TEXT,
+    argument_schema JSONB,
     last_scanned_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

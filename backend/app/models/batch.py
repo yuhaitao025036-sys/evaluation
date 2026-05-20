@@ -67,6 +67,7 @@ class Script(Base):
     file_name = Column(String(255), unique=True, nullable=False)
     file_path = Column(String(512), nullable=False)
     description = Column(Text)
+    argument_schema = Column(JSON)
     last_scanned_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
     

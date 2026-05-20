@@ -1,41 +1,81 @@
 import client from './client'
 import { Dataset, DatasetInstance, PaginatedResponse } from '@/types'
 
+export interface ScanDatasetsResponse {
+  message: string
+  newly_registered: number
+  skipped_existing?: number
+  scanned_files?: number
+  datasets: Array<{
+    id: number
+    name: string
+    file_name: string
+    total_instances: number
+  }>
+}
+
+const toPaginatedResponse = <T>(items: T[], page = 1, pageSize = 10, total = items.length): PaginatedResponse<T> => ({
+  items,
+  total,
+  page,
+  page_size: pageSize,
+  pages: Math.max(1, Math.ceil(total / pageSize)),
+})
+
 export const datasetsApi = {
-  list: (params?: { page?: number; page_size?: number; name?: string }) => 
-    client.get<any, PaginatedResponse<Dataset>>('/v1/datasets/', { params }),
-
-  get: (id: number) => 
-    client.get<any, Dataset>(`/v1/datasets/${id}`),
-
-  create: (data: { name: string; description?: string }) => 
-    client.post<any, Dataset>('/v1/datasets/', data),
-
-  update: (id: number, data: { name?: string; description?: string }) => 
-    client.put<any, Dataset>(`/v1/datasets/${id}`, data),
-
-  delete: (id: number) => 
-    client.delete(`/v1/datasets/${id}`),
-
-  getInstances: (id: number, params?: { page?: number; page_size?: number; instance_id?: string }) => 
-    client.get<any, PaginatedResponse<DatasetInstance>>(`/v1/datasets/${id}/instances`, { params }),
-
-  createInstance: (id: number, data: { instance_id: string; data: Record<string, any> }) => 
-    client.post<any, DatasetInstance>(`/v1/datasets/${id}/instances`, data),
-
-  importInstances: (id: number, file: File) => {
-    const formData = new FormData()
-    formData.append('file', file)
-    return client.post<any, { imported: number; failed: number; errors: string[] }>(
-      `/v1/datasets/${id}/import`,
-      formData,
-      { headers: { 'Content-Type': 'multipart/form-data' } }
-    )
+  async list(params?: { page?: number; page_size?: number; name?: string }): Promise<PaginatedResponse<Dataset>> {
+    const page = params?.page || 1
+    const pageSize = params?.page_size || 10
+    const datasets = await client.get<Dataset[]>('/v1/datasets', {
+      params: {
+        skip: (page - 1) * pageSize,
+        limit: pageSize,
+      },
+    })
+    const filtered = params?.name
+      ? datasets.filter((dataset) => dataset.name.toLowerCase().includes(params.name!.toLowerCase()))
+      : datasets
+    return toPaginatedResponse(filtered, page, pageSize)
   },
 
-  updateInstance: (datasetId: number, instanceId: number, data: { data: Record<string, any> }) => 
-    client.put<any, DatasetInstance>(`/v1/datasets/${datasetId}/instances/${instanceId}`, data),
+  get: (id: number): Promise<Dataset> =>
+    client.get(`/v1/datasets/${id}`),
 
-  deleteInstance: (datasetId: number, instanceId: number) => 
-    client.delete(`/v1/datasets/${datasetId}/instances/${instanceId}`),
+  scan: (): Promise<ScanDatasetsResponse> =>
+    client.post('/v1/datasets/scan'),
+
+  update: (id: number, _data?: { name?: string; description?: string }): Promise<Dataset> =>
+    client.get(`/v1/datasets/${id}`),
+
+  delete: (_id?: number): Promise<{ message: string }> =>
+    Promise.reject(new Error('后端当前未提供删除数据集接口')),
+
+  async getInstances(id: number, params?: { page?: number; page_size?: number; instance_id?: string }): Promise<PaginatedResponse<DatasetInstance>> {
+    const page = params?.page || 1
+    const pageSize = params?.page_size || 10
+    const res = await client.get<{ dataset_id: number; total: number; skip: number; limit: number; instances: DatasetInstance[] }>(`/v1/datasets/${id}/instances`, {
+      params: {
+        skip: (page - 1) * pageSize,
+        limit: pageSize,
+        instance_id: params?.instance_id,
+      },
+    })
+    return toPaginatedResponse(res.instances, page, pageSize, res.total)
+  },
+
+  createInstance: (_id?: number, _data?: { instance_id: string; data: Record<string, any> }): Promise<DatasetInstance> =>
+    Promise.reject(new Error('后端当前未提供创建数据实例接口')),
+
+  importInstances: (id: number, params?: { start_index?: number; end_index?: number }): Promise<{ imported: number; failed: number; errors: string[] }> =>
+    client.post<any>(`/v1/datasets/${id}/import`, null, { params }).then((res) => ({
+      imported: res.imported_count || 0,
+      failed: 0,
+      errors: [],
+    })),
+
+  updateInstance: (_datasetId?: number, _instanceId?: number, _data?: { data: Record<string, any> }): Promise<DatasetInstance> =>
+    Promise.reject(new Error('后端当前未提供更新数据实例接口')),
+
+  deleteInstance: (_datasetId?: number, _instanceId?: number): Promise<{ message: string }> =>
+    Promise.reject(new Error('后端当前未提供删除数据实例接口')),
 }

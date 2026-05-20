@@ -6,8 +6,9 @@ import os
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, func
 
+from app.config import settings
 from app.models import Batch, BatchResult, Dataset, DatasetInstance, Script
 from app.schemas import BatchCreate, BatchUpdate, BatchAddTasksRequest
 
@@ -29,6 +30,21 @@ class BatchService:
         4. 创建 batch_results 记录（pending 状态）
         5. 返回批次信息
         """
+        dataset = self.db.query(Dataset).filter(Dataset.id == batch_create.dataset_id).first()
+        if not dataset:
+            raise ValueError(f"数据集 {batch_create.dataset_id} 不存在")
+
+        imported_count = self.db.query(DatasetInstance).filter(
+            DatasetInstance.dataset_id == batch_create.dataset_id
+        ).count()
+        if imported_count == 0:
+            raise ValueError("数据集已扫描但未导入实例，请先导入实例后再创建批次")
+
+        execution_config = self._build_execution_config(
+            script_id=batch_create.script_id,
+            user_config=batch_create.execution_config or {}
+        )
+
         # 1. 检查批次是否已存在
         existing_batch = self.db.query(Batch).filter(
             Batch.batch_name == batch_create.batch_name
@@ -56,7 +72,7 @@ class BatchService:
                 script_id=batch_create.script_id,
                 model=batch_create.model,
                 tag=batch_create.tag,
-                execution_config=batch_create.execution_config,
+                execution_config=execution_config,
                 max_concurrency=batch_create.max_concurrency,
                 priority=batch_create.priority,
                 created_by=batch_create.created_by,
@@ -79,7 +95,7 @@ class BatchService:
         )
         
         if not instances:
-            raise ValueError("未找到符合条件的数据集实例")
+            raise ValueError("未找到符合条件的数据集实例，请检查实例 ID、范围或筛选条件")
         
         # 3. 创建 batch_results 记录
         new_tasks_count = 0
@@ -125,9 +141,10 @@ class BatchService:
                 self.db.add(batch_result)
                 new_tasks_count += 1
         
+        self.refresh_batch_rollup(batch.id)
         self.db.commit()
         self.db.refresh(batch)
-        
+
         return batch, {
             'new_tasks': new_tasks_count,
             'skipped': skipped_count,
@@ -187,8 +204,9 @@ class BatchService:
                 self.db.add(batch_result)
                 new_tasks_count += 1
         
+        self.refresh_batch_rollup(batch_id)
         self.db.commit()
-        
+
         return {
             'new_tasks': new_tasks_count,
             'skipped': skipped_count,
@@ -214,7 +232,10 @@ class BatchService:
     
     def get_batch(self, batch_id: int) -> Optional[Batch]:
         """获取批次信息"""
-        return self.db.query(Batch).filter(Batch.id == batch_id).first()
+        batch = self.db.query(Batch).filter(Batch.id == batch_id).first()
+        if batch:
+            self.refresh_batch_rollup(batch_id)
+        return batch
     
     def get_batch_by_name(self, batch_name: str) -> Optional[Batch]:
         """根据名称获取批次"""
@@ -238,7 +259,10 @@ class BatchService:
         if tag:
             query = query.filter(Batch.tag == tag)
         
-        return query.order_by(Batch.created_at.desc()).offset(skip).limit(limit).all()
+        batches = query.order_by(Batch.created_at.desc()).offset(skip).limit(limit).all()
+        for batch in batches:
+            self.refresh_batch_rollup(batch.id)
+        return batches
     
     def delete_batch(self, batch_id: int) -> bool:
         """删除批次（级联删除所有 batch_results）"""
@@ -252,57 +276,177 @@ class BatchService:
     
     def get_batch_stats(self, batch_id: int) -> Optional[Dict[str, Any]]:
         """获取批次统计信息"""
-        from sqlalchemy import func
-        
         batch = self.db.query(Batch).filter(Batch.id == batch_id).first()
         if not batch:
             return None
-        
-        # 计算成功率
-        success_rate = batch.completed_tasks / batch.total_tasks if batch.total_tasks > 0 else 0
-        
-        # 计算验证通过率
+        return self.build_batch_stats(batch)
+    
+    def get_batch_rollup(self, batch_id: int) -> Dict[str, Any]:
+        """从 batch_results 实时聚合批次计数。"""
+        status_rows = self.db.query(
+            BatchResult.status,
+            func.count(BatchResult.id)
+        ).filter(
+            BatchResult.batch_id == batch_id
+        ).group_by(BatchResult.status).all()
+
+        counts = {status: int(count) for status, count in status_rows}
+        total_tasks = sum(counts.values())
+        pending_tasks = counts.get('pending', 0)
+        queued_tasks = counts.get('queued', 0)
+        running_tasks = counts.get('running', 0)
+        retrying_tasks = counts.get('retrying', 0)
+        completed_tasks = counts.get('completed', 0)
+        failed_tasks = counts.get('failed', 0)
+        active_tasks = queued_tasks + running_tasks + retrying_tasks
+        terminal_tasks = completed_tasks + failed_tasks
+
         validation_success_count = self.db.query(func.count(BatchResult.id)).filter(
             and_(
                 BatchResult.batch_id == batch_id,
                 BatchResult.status == 'completed',
                 BatchResult.validation_success == True
             )
-        ).scalar()
-        
-        validation_success_rate = validation_success_count / batch.completed_tasks if batch.completed_tasks > 0 else None
-        
-        # 计算平均耗时
+        ).scalar() or 0
+        validation_failure_count = self.db.query(func.count(BatchResult.id)).filter(
+            and_(
+                BatchResult.batch_id == batch_id,
+                BatchResult.status == 'completed',
+                BatchResult.validation_success == False
+            )
+        ).scalar() or 0
+        validation_unknown_count = max(completed_tasks - validation_success_count - validation_failure_count, 0)
+
+        tests_passed = self.db.query(func.coalesce(func.sum(BatchResult.tests_passed), 0)).filter(
+            BatchResult.batch_id == batch_id
+        ).scalar() or 0
+        tests_failed = self.db.query(func.coalesce(func.sum(BatchResult.tests_failed), 0)).filter(
+            BatchResult.batch_id == batch_id
+        ).scalar() or 0
+        tests_total = self.db.query(func.coalesce(func.sum(BatchResult.tests_total), 0)).filter(
+            BatchResult.batch_id == batch_id
+        ).scalar() or 0
         avg_duration = self.db.query(func.avg(BatchResult.duration_seconds)).filter(
             and_(
                 BatchResult.batch_id == batch_id,
-                BatchResult.status == 'completed'
+                BatchResult.duration_seconds != None
             )
         ).scalar()
-        
         total_duration = self.db.query(func.sum(BatchResult.duration_seconds)).filter(
             and_(
                 BatchResult.batch_id == batch_id,
-                BatchResult.status == 'completed'
+                BatchResult.duration_seconds != None
             )
         ).scalar()
-        
+
         return {
-            'batch_id': batch_id,
+            'total_tasks': total_tasks,
+            'pending_tasks': pending_tasks,
+            'queued_tasks': queued_tasks,
+            'running_tasks': running_tasks,
+            'retrying_tasks': retrying_tasks,
+            'completed_tasks': completed_tasks,
+            'failed_tasks': failed_tasks,
+            'active_tasks': active_tasks,
+            'terminal_tasks': terminal_tasks,
+            'validation_success_count': validation_success_count,
+            'validation_failure_count': validation_failure_count,
+            'validation_unknown_count': validation_unknown_count,
+            'tests_passed': int(tests_passed),
+            'tests_failed': int(tests_failed),
+            'tests_total': int(tests_total),
+            'avg_duration': float(avg_duration) if avg_duration is not None else None,
+            'total_duration': float(total_duration) if total_duration is not None else None,
+        }
+
+    def refresh_batch_rollup(self, batch_id: int, commit: bool = False) -> Optional[Dict[str, Any]]:
+        """回写批次缓存计数字段，避免数据库 trigger 缺失导致调度不准。"""
+        batch = self.db.query(Batch).filter(Batch.id == batch_id).first()
+        if not batch:
+            return None
+
+        rollup = self.get_batch_rollup(batch_id)
+        batch.total_tasks = rollup['total_tasks']
+        batch.pending_tasks = rollup['pending_tasks']
+        batch.queued_tasks = rollup['queued_tasks']
+        batch.running_tasks = rollup['running_tasks']
+        batch.completed_tasks = rollup['completed_tasks']
+        batch.failed_tasks = rollup['failed_tasks']
+        batch.current_running = rollup['active_tasks']
+        batch.updated_at = datetime.utcnow()
+
+        if commit:
+            self.db.commit()
+        return rollup
+
+    def build_batch_stats(self, batch: Batch) -> Dict[str, Any]:
+        """构造批次实时统计响应。"""
+        rollup = self.refresh_batch_rollup(batch.id) or self.get_batch_rollup(batch.id)
+        total_tasks = rollup['total_tasks']
+        completed_tasks = rollup['completed_tasks']
+        failed_tasks = rollup['failed_tasks']
+        terminal_tasks = rollup['terminal_tasks']
+        active_tasks = rollup['active_tasks']
+        pending_tasks = rollup['pending_tasks']
+        validation_success_count = rollup['validation_success_count']
+        validation_failure_count = rollup['validation_failure_count']
+        tests_total = rollup['tests_total']
+
+        completion_rate = terminal_tasks / total_tasks if total_tasks else 0
+        task_success_rate = completed_tasks / total_tasks if total_tasks else 0
+        task_failure_rate = failed_tasks / total_tasks if total_tasks else 0
+        validation_success_rate = validation_success_count / completed_tasks if completed_tasks else None
+        validation_failure_rate = validation_failure_count / completed_tasks if completed_tasks else None
+        evaluation_success_rate = validation_success_count / total_tasks if total_tasks else 0
+        evaluation_failure_rate = (failed_tasks + validation_failure_count) / total_tasks if total_tasks else 0
+        test_pass_rate = rollup['tests_passed'] / tests_total if tests_total else None
+
+        effective_status = self._compute_effective_status(batch, rollup)
+        outcome = self._compute_outcome(batch, rollup)
+
+        return {
+            'batch_id': batch.id,
             'batch_name': batch.batch_name,
             'status': batch.status,
-            'total_tasks': batch.total_tasks,
-            'pending_tasks': batch.pending_tasks,
-            'queued_tasks': batch.queued_tasks,
-            'running_tasks': batch.running_tasks,
-            'completed_tasks': batch.completed_tasks,
-            'failed_tasks': batch.failed_tasks,
-            'success_rate': success_rate,
+            'effective_status': effective_status,
+            'outcome': outcome,
+            **rollup,
+            'completion_rate': completion_rate,
+            'task_success_rate': task_success_rate,
+            'task_failure_rate': task_failure_rate,
+            'success_rate': task_success_rate,
+            'failure_rate': task_failure_rate,
             'validation_success_rate': validation_success_rate,
-            'avg_duration': float(avg_duration) if avg_duration else None,
-            'total_duration': float(total_duration) if total_duration else None
+            'validation_failure_rate': validation_failure_rate,
+            'evaluation_success_rate': evaluation_success_rate,
+            'evaluation_failure_rate': evaluation_failure_rate,
+            'test_pass_rate': test_pass_rate,
         }
-    
+
+    def _compute_effective_status(self, batch: Batch, rollup: Dict[str, Any]) -> str:
+        if batch.status == 'paused':
+            return 'paused'
+        if rollup['active_tasks'] > 0:
+            return 'running'
+        if rollup['total_tasks'] > 0 and rollup['terminal_tasks'] == rollup['total_tasks']:
+            return 'completed'
+        if rollup['pending_tasks'] > 0:
+            return 'created'
+        return batch.status
+
+    def _compute_outcome(self, batch: Batch, rollup: Dict[str, Any]) -> str:
+        if batch.status == 'paused':
+            return 'paused'
+        if rollup['active_tasks'] > 0 or rollup['pending_tasks'] > 0:
+            return 'in_progress'
+        if rollup['total_tasks'] == 0:
+            return 'not_started'
+        if rollup['terminal_tasks'] == rollup['total_tasks']:
+            if rollup['failed_tasks'] == 0 and rollup['validation_failure_count'] == 0:
+                return 'completed_successfully'
+            return 'completed_with_failures'
+        return 'unknown'
+
     def get_batch_tasks(
         self,
         batch_id: int,
@@ -329,6 +473,33 @@ class BatchService:
     
     # ========== 私有方法 ==========
     
+    def _build_execution_config(self, script_id: int, user_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Merge script argument defaults with user-provided values."""
+        script = self.db.query(Script).filter(Script.id == script_id).first()
+        if not script:
+            raise ValueError(f"脚本 {script_id} 不存在")
+
+        argument_schema = script.argument_schema or []
+        if not argument_schema:
+            return user_config
+
+        allowed_names = {arg.get('name') for arg in argument_schema if arg.get('name')}
+        config = {}
+        for arg in argument_schema:
+            name = arg.get('name')
+            if not name:
+                continue
+            if 'default' in arg:
+                config[name] = arg.get('default')
+
+        for key, value in user_config.items():
+            normalized_key = key[2:] if key.startswith('--') else key
+            normalized_key = normalized_key.replace('_', '-')
+            if normalized_key in allowed_names:
+                config[normalized_key] = value
+
+        return config
+
     def _query_instances(
         self,
         dataset_id: int,
@@ -369,9 +540,10 @@ class BatchService:
     
     def _generate_output_dir(self, batch_name: str, batch_id: int) -> str:
         """生成批次输出目录（包含 batch_id 避免冲突）"""
-        base_dir = os.getenv('DUCC_OUTPUT_BASE_DIR', '/path/to/evaluation/data/outputs')
+        base_dir = os.getenv('DUCC_OUTPUT_BASE_DIR', settings.OUTPUTS_DIR)
+        os.makedirs(base_dir, exist_ok=True)
         safe_batch_name = batch_name.replace('/', '_').replace(':', '_')
-        return os.path.join(base_dir, f"{safe_batch_name}_{batch_id}")
+        return os.path.abspath(os.path.join(base_dir, f"{safe_batch_name}_{batch_id}"))
     
     def _generate_task_output_dir(self, batch_output_dir: str, instance_id: str) -> str:
         """生成任务输出目录"""

@@ -1,47 +1,44 @@
 import client from './client'
-import { Comparison, PaginatedResponse, ComparisonResult, ModelComparisonSummary, TagComparisonSummary } from '@/types'
+import type {
+  CompareBatchesRequest,
+  CompareByModelsRequest,
+  CompareByTagsRequest,
+  CompareInstanceRequest,
+  ComparisonMetadata,
+  ComparisonResponse,
+  InstanceComparisonResponse,
+} from '@/types'
 
 export const comparisonsApi = {
-  list: (params?: { page?: number; page_size?: number; model?: string }) => 
-    client.get<any, PaginatedResponse<Comparison>>('/v1/comparisons/', { params }),
+  getMetadata(): Promise<ComparisonMetadata> {
+    return client.get('/v1/comparisons/metadata')
+  },
 
-  get: (id: number) => 
-    client.get<any, Comparison>(`/v1/comparisons/${id}`),
+  compareBatches(params: CompareBatchesRequest): Promise<ComparisonResponse> {
+    return client.post('/v1/comparisons/compare-batches', params)
+  },
 
-  create: (data: {
-    name: string
-    description?: string
-    baseline_tag: string
-    comparison_tags: string[]
-    model?: string
-    filter_conditions?: Record<string, any>
-  }) => client.post<any, Comparison>('/v1/comparisons/', data),
+  compareByModels(params: CompareByModelsRequest): Promise<ComparisonResponse> {
+    return client.post('/v1/comparisons/compare-by-models', params)
+  },
 
-  delete: (id: number) => 
-    client.delete(`/v1/comparisons/${id}`),
+  compareByTags(params: CompareByTagsRequest): Promise<ComparisonResponse> {
+    return client.post('/v1/comparisons/compare-by-tags', params)
+  },
 
-  compareByModels: (params: {
-    tag: string
-    models: string[]
-    filter_conditions?: Record<string, any>
-  }) => client.post<any, ModelComparisonSummary>('/v1/comparisons/compare-models', params),
+  compareInstance(params: CompareInstanceRequest): Promise<InstanceComparisonResponse> {
+    return client.post('/v1/comparisons/compare-instance', params)
+  },
 
-  compareByTags: (params: {
-    model: string
-    baseline_tag: string
-    comparison_tags: string[]
-    filter_conditions?: Record<string, any>
-  }) => client.post<any, TagComparisonSummary>('/v1/comparisons/compare-tags', params),
+  getPatchContent(batchId: number, instanceId: string): Promise<{ content: string }> {
+    return client.get(`/v1/batches/${batchId}/tasks/${encodeURIComponent(instanceId)}/patch-content`)
+  },
 
-  compareInstance: (instanceId: string, params: {
-    baseline_tag: string
-    comparison_tags: string[]
-    model?: string
-  }) => client.get<any, ComparisonResult>(`/v1/comparisons/instance/${instanceId}`, { params }),
+  getTags(): Promise<string[]> {
+    return client.get('/v1/comparisons/tags')
+  },
 
-  getTags: () => 
-    client.get<any, string[]>('/v1/comparisons/tags'),
-
-  getModelsInUse: () => 
-    client.get<any, string[]>('/v1/comparisons/models-in-use'),
+  getModelsInUse(): Promise<string[]> {
+    return client.get('/v1/comparisons/models-in-use')
+  },
 }

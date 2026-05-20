@@ -3,6 +3,8 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.websocket.manager import manager
+from app.database import engine
+from sqlalchemy import text
 import uuid
 
 # Create FastAPI app
@@ -26,8 +28,15 @@ app.add_middleware(
 async def startup_event():
     """Startup tasks"""
     print(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
+    ensure_schema_updates()
     # Start WebSocket heartbeat monitor
     manager.start_monitor()
+
+
+def ensure_schema_updates():
+    """Apply lightweight idempotent schema updates for existing installations."""
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE scripts ADD COLUMN IF NOT EXISTS argument_schema JSONB"))
 
 
 @app.get("/")
@@ -82,10 +91,12 @@ async def websocket_endpoint(websocket: WebSocket, connection_id: str):
 
 
 # Import and include API routers
-from app.api.v1 import models, datasets, scripts, batches, comparisons
+from app.api.v1 import models, datasets, scripts, batches, comparisons, task_groups, task_instances
 
 app.include_router(models.router, prefix="/api/v1/models", tags=["models"])
 app.include_router(datasets.router, prefix="/api/v1/datasets", tags=["datasets"])
 app.include_router(scripts.router, prefix="/api/v1/scripts", tags=["scripts"])
 app.include_router(batches.router, prefix="/api/v1/batches", tags=["batches"])
+app.include_router(task_groups.router, prefix="/api/v1/task-groups", tags=["task-groups"])
+app.include_router(task_instances.router, prefix="/api/v1/task-instances", tags=["task-instances"])
 app.include_router(comparisons.router, prefix="/api/v1/comparisons", tags=["comparisons"])

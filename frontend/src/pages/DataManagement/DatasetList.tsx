@@ -1,24 +1,22 @@
 import { useState, useEffect } from 'react'
-import { Card, Table, Button, Space, Modal, Form, Input, message, Upload } from 'antd'
-import { PlusOutlined, ReloadOutlined, UploadOutlined, EyeOutlined, DeleteOutlined } from '@ant-design/icons'
+import { Card, Table, Button, Space, Modal, message } from 'antd'
+import { ReloadOutlined, SyncOutlined, DatabaseOutlined, EyeOutlined, DeleteOutlined } from '@ant-design/icons'
 import { datasetsApi } from '@/api/datasets'
 import { Dataset } from '@/types'
 import type { ColumnsType } from 'antd/es/table'
-import type { UploadFile } from 'antd/es/upload/interface'
 import DatasetInstancesModal from './DatasetInstancesModal'
 
 export default function DatasetList() {
   const [loading, setLoading] = useState(false)
+  const [scanLoading, setScanLoading] = useState(false)
+  const [importLoading, setImportLoading] = useState(false)
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
-  const [createModalVisible, setCreateModalVisible] = useState(false)
   const [importModalVisible, setImportModalVisible] = useState(false)
   const [instancesModalVisible, setInstancesModalVisible] = useState(false)
   const [selectedDataset, setSelectedDataset] = useState<Dataset | null>(null)
-  const [form] = Form.useForm()
-  const [importForm] = Form.useForm()
 
   const fetchData = async () => {
     setLoading(true)
@@ -28,6 +26,7 @@ export default function DatasetList() {
       setTotal(res.total)
     } catch (error) {
       console.error('Failed to fetch datasets:', error)
+      message.error('获取数据集列表失败')
     } finally {
       setLoading(false)
     }
@@ -37,30 +36,36 @@ export default function DatasetList() {
     fetchData()
   }, [page, pageSize])
 
-  const handleCreate = async (values: { name: string; description?: string }) => {
+  const handleScan = async () => {
+    setScanLoading(true)
     try {
-      await datasetsApi.create(values)
-      message.success('创建成功')
-      setCreateModalVisible(false)
-      form.resetFields()
+      const res = await datasetsApi.scan()
+      const skippedText = typeof res.skipped_existing === 'number' ? `，跳过已存在 ${res.skipped_existing} 个` : ''
+      message.success(`扫描完成，新增 ${res.newly_registered || 0} 个数据集${skippedText}`)
       fetchData()
     } catch (error) {
-      console.error('Failed to create dataset:', error)
+      console.error('Failed to scan datasets:', error)
+      message.error('扫描数据目录失败，请检查后端数据目录配置')
+    } finally {
+      setScanLoading(false)
     }
   }
 
-  const handleImport = async (values: { file: UploadFile[] }) => {
-    if (!selectedDataset || !values.file || values.file.length === 0) return
-    
+  const handleImport = async () => {
+    if (!selectedDataset) return
+
+    setImportLoading(true)
     try {
-      const file = values.file[0].originFileObj as File
-      const res = await datasetsApi.importInstances(selectedDataset.id, file)
-      message.success(`成功导入 ${res.imported} 条数据${res.failed > 0 ? `，失败 ${res.failed} 条` : ''}`)
+      const res = await datasetsApi.importInstances(selectedDataset.id)
+      message.success(`成功导入 ${res.imported} 条实例${res.failed > 0 ? `，失败 ${res.failed} 条` : ''}`)
       setImportModalVisible(false)
-      importForm.resetFields()
+      setSelectedDataset(null)
       fetchData()
     } catch (error) {
       console.error('Failed to import instances:', error)
+      message.error('导入实例失败，请检查后端数据文件是否存在')
+    } finally {
+      setImportLoading(false)
     }
   }
 
@@ -78,6 +83,7 @@ export default function DatasetList() {
           fetchData()
         } catch (error) {
           console.error('Failed to delete dataset:', error)
+          message.error('后端当前未提供删除数据集接口')
         }
       },
     })
@@ -96,28 +102,34 @@ export default function DatasetList() {
       key: 'name',
     },
     {
-      title: '描述',
-      dataIndex: 'description',
-      key: 'description',
+      title: '文件名',
+      dataIndex: 'file_name',
+      key: 'file_name',
+      render: (text) => text || '-',
+    },
+    {
+      title: '格式',
+      dataIndex: 'format',
+      key: 'format',
+      width: 90,
       render: (text) => text || '-',
     },
     {
       title: '实例数',
-      dataIndex: 'instance_count',
-      key: 'instance_count',
-      render: (count) => count || 0,
+      key: 'instances',
+      render: (_, record) => `${record.imported_instances || 0} / ${record.total_instances || 0}`,
     },
     {
       title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
-      render: (time: string) => new Date(time).toLocaleString('zh-CN'),
+      render: (time: string) => time ? new Date(time).toLocaleString('zh-CN') : '-',
     },
     {
       title: '操作',
       key: 'action',
       fixed: 'right',
-      width: 250,
+      width: 260,
       render: (_, record) => (
         <Space size="small">
           <Button
@@ -134,13 +146,13 @@ export default function DatasetList() {
           <Button
             type="link"
             size="small"
-            icon={<UploadOutlined />}
+            icon={<DatabaseOutlined />}
             onClick={() => {
               setSelectedDataset(record)
               setImportModalVisible(true)
             }}
           >
-            导入数据
+            导入实例
           </Button>
           <Button
             type="link"
@@ -162,11 +174,11 @@ export default function DatasetList() {
         title="数据集列表"
         extra={
           <Space>
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateModalVisible(true)}>
-              新建数据集
+            <Button type="primary" icon={<SyncOutlined />} loading={scanLoading} onClick={handleScan}>
+              扫描数据目录
             </Button>
-            <Button icon={<ReloadOutlined />} onClick={fetchData}>
-              刷新
+            <Button icon={<ReloadOutlined />} onClick={fetchData} loading={loading}>
+              刷新列表
             </Button>
           </Space>
         }
@@ -191,60 +203,23 @@ export default function DatasetList() {
       </Card>
 
       <Modal
-        title="新建数据集"
-        open={createModalVisible}
-        onCancel={() => {
-          setCreateModalVisible(false)
-          form.resetFields()
-        }}
-        onOk={() => form.submit()}
-      >
-        <Form form={form} layout="vertical" onFinish={handleCreate}>
-          <Form.Item
-            name="name"
-            label="名称"
-            rules={[{ required: true, message: '请输入数据集名称' }]}
-          >
-            <Input placeholder="请输入数据集名称" />
-          </Form.Item>
-          <Form.Item name="description" label="描述">
-            <Input.TextArea rows={3} placeholder="请输入数据集描述" />
-          </Form.Item>
-        </Form>
-      </Modal>
-
-      <Modal
-        title="导入数据"
+        title="导入实例"
         open={importModalVisible}
+        confirmLoading={importLoading}
         onCancel={() => {
           setImportModalVisible(false)
-          importForm.resetFields()
+          setSelectedDataset(null)
         }}
-        onOk={() => importForm.submit()}
+        onOk={handleImport}
+        okText="开始导入"
+        cancelText="取消"
       >
-        <Form form={importForm} layout="vertical" onFinish={handleImport}>
-          <Form.Item
-            name="file"
-            label="JSONL 文件"
-            valuePropName="fileList"
-            getValueFromEvent={(e) => {
-              if (Array.isArray(e)) return e
-              return e?.fileList
-            }}
-            rules={[{ required: true, message: '请选择文件' }]}
-          >
-            <Upload
-              accept=".jsonl"
-              maxCount={1}
-              beforeUpload={() => false}
-            >
-              <Button icon={<UploadOutlined />}>选择文件</Button>
-            </Upload>
-          </Form.Item>
-          <div style={{ color: '#999', fontSize: 12 }}>
-            文件格式：每行一个 JSON 对象，需包含 instance_id 字段
-          </div>
-        </Form>
+        <p>
+          将从后端已扫描的数据文件中读取实例并导入数据库。
+        </p>
+        <p style={{ color: '#666' }}>
+          数据集：{selectedDataset?.name || '-'}；文件：{selectedDataset?.file_name || '-'}
+        </p>
       </Modal>
 
       {selectedDataset && (

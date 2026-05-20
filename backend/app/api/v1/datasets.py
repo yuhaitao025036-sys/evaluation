@@ -1,9 +1,9 @@
 """Datasets API"""
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from app.database import get_db
-from app.schemas import Dataset, DatasetCreate
+from app.schemas import Dataset
 from app.services.dataset_service import DatasetService
 from app import models
 
@@ -39,10 +39,13 @@ async def scan_datasets(db: Session = Depends(get_db)):
     any new .parquet, .csv, .json, or .jsonl files.
     """
     try:
-        newly_registered = DatasetService.scan_datasets_folder(db)
+        scan_result = DatasetService.scan_datasets_folder(db)
+        newly_registered = scan_result["newly_registered"]
         return {
-            "message": f"Scanned datasets folder",
+            "message": "Scanned datasets folder",
             "newly_registered": len(newly_registered),
+            "skipped_existing": scan_result["skipped_existing"],
+            "scanned_files": scan_result["scanned_files"],
             "datasets": [
                 {
                     "id": d.id,
@@ -98,21 +101,36 @@ async def get_dataset_instances(
     dataset_id: int,
     skip: int = 0,
     limit: int = 50,
+    instance_id: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """Get instances from a dataset"""
-    instances = db.query(models.DatasetInstance).filter(
+    dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    query = db.query(models.DatasetInstance).filter(
         models.DatasetInstance.dataset_id == dataset_id
-    ).offset(skip).limit(limit).all()
-    
+    )
+    if instance_id:
+        query = query.filter(models.DatasetInstance.instance_id.contains(instance_id))
+
+    total = query.count()
+    instances = query.order_by(models.DatasetInstance.id).offset(skip).limit(limit).all()
+
     return {
         "dataset_id": dataset_id,
+        "total": total,
+        "skip": skip,
+        "limit": limit,
         "instances": [
             {
                 "id": inst.id,
+                "dataset_id": inst.dataset_id,
                 "instance_id": inst.instance_id,
                 "repo_language": inst.repo_language,
-                "data": inst.data
+                "data": inst.data,
+                "created_at": inst.created_at,
             }
             for inst in instances
         ]

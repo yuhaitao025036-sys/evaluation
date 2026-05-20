@@ -144,9 +144,10 @@ export default function BatchList() {
     return <Tag color={config.color}>{config.text}</Tag>
   }
 
-  const getSuccessRate = (batch: Batch) => {
+  const getCompletionRate = (batch: Batch) => {
     if (batch.total_tasks === 0) return 0
-    return Math.round((batch.completed_tasks / batch.total_tasks) * 100)
+    const terminalTasks = batch.completed_tasks + batch.failed_tasks
+    return Math.round((terminalTasks / batch.total_tasks) * 100)
   }
 
   const columns = [
@@ -190,38 +191,38 @@ export default function BatchList() {
       key: 'progress',
       width: 350,
       render: (_: any, record: Batch) => {
-        const successRate = getSuccessRate(record)
+        const terminalTasks = record.completed_tasks + record.failed_tasks
+        const activeTasks = record.queued_tasks + record.running_tasks
+        const completionRate = getCompletionRate(record)
         return (
           <div>
             <div style={{ marginBottom: 8 }}>
-              <Progress 
-                percent={Math.round((record.completed_tasks / record.total_tasks) * 100)} 
-                success={{ percent: successRate }}
-                status={record.status === 'failed' ? 'exception' : undefined}
+              <Progress
+                percent={completionRate}
+                success={{ percent: record.total_tasks ? Math.round((record.completed_tasks / record.total_tasks) * 100) : 0 }}
+                status={record.failed_tasks > 0 ? 'exception' : undefined}
               />
             </div>
-            <Space size="large">
+            <Space size="large" wrap>
               <Text type="secondary" style={{ fontSize: 12 }}>
-                📊 {record.completed_tasks}/{record.total_tasks} 完成
+                已结束 {terminalTasks}/{record.total_tasks}
               </Text>
-              {record.completed_tasks > 0 && (
-                <Text type="success" style={{ fontSize: 12 }}>
-                  ✓ {successRate}% 成功
-                </Text>
-              )}
+              <Text type="success" style={{ fontSize: 12 }}>
+                执行成功 {record.completed_tasks}
+              </Text>
               {record.failed_tasks > 0 && (
                 <Text type="danger" style={{ fontSize: 12 }}>
-                  ✗ {record.failed_tasks} 失败
+                  执行失败 {record.failed_tasks}
                 </Text>
               )}
-              {record.running_tasks > 0 && (
+              {activeTasks > 0 && (
                 <Text type="warning" style={{ fontSize: 12 }}>
-                  ⏳ {record.running_tasks} 运行中
+                  运行中 {activeTasks}
                 </Text>
               )}
               {record.pending_tasks > 0 && (
                 <Text type="secondary" style={{ fontSize: 12 }}>
-                  📋 {record.pending_tasks} 待执行
+                  待执行 {record.pending_tasks}
                 </Text>
               )}
             </Space>

@@ -34,7 +34,7 @@ export default function ScriptList() {
     setScanning(true)
     try {
       const res = await scriptsApi.scan()
-      message.success(`扫描完成，新增 ${res.added} 个脚本，更新 ${res.updated} 个脚本`)
+      message.success(`扫描完成，新增 ${res.registered_count} 个脚本，更新 ${res.updated_count} 个脚本`)
       fetchData()
     } catch (error) {
       console.error('Failed to scan scripts:', error)
@@ -52,14 +52,20 @@ export default function ScriptList() {
     },
     {
       title: '名称',
-      dataIndex: 'name',
-      key: 'name',
+      key: 'file_name',
+      render: (_, record) => record.file_name || record.name || '-',
     },
     {
       title: '描述',
       dataIndex: 'description',
       key: 'description',
       render: (text) => text || '-',
+    },
+    {
+      title: '参数数',
+      key: 'argument_count',
+      width: 90,
+      render: (_, record) => record.argument_schema?.length || 0,
     },
     {
       title: '文件路径',

@@ -4,6 +4,7 @@ import Dashboard from './pages/Dashboard'
 import DataManagement from './pages/DataManagement'
 import BatchList from './pages/BatchList'
 import BatchCreate from './pages/BatchCreate'
+import BatchDetail from './pages/BatchDetail'
 import TaskCreate from './pages/TaskCreate'
 import TaskDetail from './pages/TaskDetail'
 import Comparison from './pages/Comparison'
@@ -20,7 +21,7 @@ function App() {
           {/* 批次管理 (v2.0) */}
           <Route path="batches" element={<BatchList />} />
           <Route path="batches/create" element={<BatchCreate />} />
-          <Route path="batches/:id" element={<TaskDetail />} /> {/* 暂时复用旧的详情页 */}
+          <Route path="batches/:id" element={<BatchDetail />} />
           
           {/* 旧路由 (保留兼容) */}
           <Route path="task/create" element={<TaskCreate />} />

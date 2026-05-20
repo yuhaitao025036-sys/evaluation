@@ -4,6 +4,7 @@ import { datasetsApi } from '@/api/datasets'
 import { scriptsApi } from '@/api/scripts'
 import type { Dataset, Script, BatchCreateRequest } from '@/types'
 import InstanceSelector from './InstanceSelector'
+import ScriptParametersForm from './ScriptParametersForm'
 
 interface Props {
   onSubmit: (data: BatchCreateRequest) => void
@@ -16,22 +17,33 @@ export default function NewBatchForm({ onSubmit, loading, onCancel }: Props) {
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [scripts, setScripts] = useState<Script[]>([])
   const [selectedDatasetId, setSelectedDatasetId] = useState<number | null>(null)
+  const [selectedScript, setSelectedScript] = useState<Script | null>(null)
 
   useEffect(() => {
     fetchData()
   }, [])
 
   const fetchData = async () => {
-    try {
-      const [datasetsRes, scriptsRes] = await Promise.all([
-        datasetsApi.list({ page: 1, page_size: 1000 }),
-        scriptsApi.list({ page: 1, page_size: 1000 })
-      ])
-      setDatasets(datasetsRes.items)
-      setScripts(scriptsRes.items)
-    } catch (error) {
-      console.error('获取数据失败:', error)
-      message.error('获取数据失败')
+    const [datasetsResult, scriptsResult] = await Promise.allSettled([
+      datasetsApi.list({ page: 1, page_size: 1000 }),
+      scriptsApi.list({ page: 1, page_size: 1000 })
+    ])
+
+    if (datasetsResult.status === 'fulfilled') {
+      setDatasets(datasetsResult.value.items)
+    } else {
+      console.error('获取数据集失败:', datasetsResult.reason)
+      message.error('获取数据集失败')
+    }
+
+    if (scriptsResult.status === 'fulfilled') {
+      setScripts(scriptsResult.value.items)
+      if (selectedScript) {
+        setSelectedScript(scriptsResult.value.items.find(script => script.id === selectedScript.id) || null)
+      }
+    } else {
+      console.error('获取脚本失败:', scriptsResult.reason)
+      message.error('获取脚本失败')
     }
   }
 
@@ -45,6 +57,7 @@ export default function NewBatchForm({ onSubmit, loading, onCancel }: Props) {
       max_concurrency: values.max_concurrency || 10,
       max_retries: values.max_retries || 3,
       priority: values.priority || 0,
+      execution_config: values.execution_config || {},
       ...values.instance_selection,
       append_to_existing: false
     }
@@ -52,16 +65,38 @@ export default function NewBatchForm({ onSubmit, loading, onCancel }: Props) {
     onSubmit(data)
   }
 
-  // 常用模型列表
+  const handleScriptChange = (scriptId: number) => {
+    const script = scripts.find(script => script.id === scriptId) || null
+    setSelectedScript(script)
+
+    const defaults: Record<string, any> = {}
+    for (const argument of script?.argument_schema || []) {
+      defaults[argument.name] = argument.default
+    }
+    form.setFieldsValue({ execution_config: defaults })
+  }
+
+  // Ducc 支持的模型列表，可通过 ducc models 查看
   const commonModels = [
-    'gpt-4-turbo',
-    'gpt-4',
-    'gpt-3.5-turbo',
-    'claude-3.5-sonnet',
-    'claude-3-opus',
-    'claude-3-sonnet',
-    'gemini-1.5-pro',
-    'gemini-1.0-pro'
+    'auto',
+    'Kimi-K2.6',
+    'MiniMax-M2.7',
+    'GLM-5',
+    'GLM-5.1',
+    'GLM-5-Turbo',
+    'gpt-5.5',
+    'gpt-5.4',
+    'gpt-5.3-codex',
+    'Claude Haiku 4.5',
+    'Claude Sonnet 4.5',
+    'Claude Sonnet 4.6',
+    'Claude Opus 4.5',
+    'Claude Opus 4.6',
+    'Kimi-K2.5',
+    'MiniMax-M2-Stable',
+    'MiniMax-M2.1',
+    'DeepSeek-V4-Flash',
+    'DeepSeek-V4-Pro'
   ]
 
   return (
@@ -99,12 +134,15 @@ export default function NewBatchForm({ onSubmit, loading, onCancel }: Props) {
           optionFilterProp="children"
           onChange={setSelectedDatasetId}
         >
-          {datasets.map(dataset => (
-            <Select.Option key={dataset.id} value={dataset.id}>
-              {dataset.name}
-              {dataset.instance_count && ` (${dataset.instance_count} 个实例)`}
-            </Select.Option>
-          ))}
+          {datasets.map(dataset => {
+            const imported = dataset.imported_instances ?? 0
+            const total = dataset.total_instances ?? 0
+            return (
+              <Select.Option key={dataset.id} value={dataset.id} disabled={imported === 0}>
+                {dataset.name}（已导入 {imported} / 总数 {total}）{imported === 0 ? ' - 请先导入实例' : ''}
+              </Select.Option>
+            )
+          })}
         </Select>
       </Form.Item>
 
@@ -113,27 +151,33 @@ export default function NewBatchForm({ onSubmit, loading, onCancel }: Props) {
         label="评测脚本"
         rules={[{ required: true, message: '请选择评测脚本' }]}
       >
-        <Select placeholder="请选择评测脚本">
+        <Select placeholder="请选择评测脚本" onChange={handleScriptChange}>
           {scripts.map(script => (
             <Select.Option key={script.id} value={script.id}>
-              {script.name || script.file_path}
+              {script.file_name || script.name || script.file_path}
             </Select.Option>
           ))}
         </Select>
       </Form.Item>
 
+      {selectedScript && (
+        <>
+          <Divider orientation="left">脚本参数</Divider>
+          <ScriptParametersForm argumentsSchema={selectedScript.argument_schema || []} />
+        </>
+      )}
+
       <Form.Item
         name="model"
         label="模型"
         rules={[{ required: true, message: '请输入模型名称' }]}
-        extra="选择或输入模型名称，用于结果对比"
+        extra="当前模型列表来自 Ducc Agent，可通过 ducc models 查看；后续接入千帆等平台后，可在此选择对应平台支持的模型，用于结果对比"
       >
         <Select
-          placeholder="选择或输入模型名称"
+          placeholder="请选择模型名称"
           showSearch
           allowClear
-          mode="tags"
-          maxCount={1}
+          optionFilterProp="children"
         >
           {commonModels.map(model => (
             <Select.Option key={model} value={model}>

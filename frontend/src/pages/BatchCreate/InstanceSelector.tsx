@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Radio, Input, InputNumber, Space, Card, message } from 'antd'
+import { Radio, Input, InputNumber, Space, Card } from 'antd'
 import { datasetsApi } from '@/api/datasets'
 import type { RadioChangeEvent } from 'antd'
 
@@ -11,7 +11,7 @@ interface Props {
 
 type SelectionMode = 'all' | 'range' | 'ids' | 'filter'
 
-export default function InstanceSelector({ datasetId, value, onChange }: Props) {
+export default function InstanceSelector({ datasetId, onChange }: Props) {
   const [mode, setMode] = useState<SelectionMode>('all')
   const [startIndex, setStartIndex] = useState<number>(0)
   const [endIndex, setEndIndex] = useState<number>(100)
@@ -31,7 +31,7 @@ export default function InstanceSelector({ datasetId, value, onChange }: Props) 
   const fetchDatasetInfo = async (id: number) => {
     try {
       const dataset = await datasetsApi.get(id)
-      setTotalInstances(dataset.instance_count || 0)
+      setTotalInstances(dataset.imported_instances ?? 0)
     } catch (error) {
       console.error('获取数据集信息失败:', error)
     }
