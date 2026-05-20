@@ -5,6 +5,7 @@ export interface ScanScriptsResponse {
   message: string
   registered_count: number
   updated_count: number
+  deleted_count: number
   scripts: Array<{
     id: number
     file_name: string

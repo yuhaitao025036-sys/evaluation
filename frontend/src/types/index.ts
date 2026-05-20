@@ -288,6 +288,21 @@ export interface Batch {
   created_by?: string
 }
 
+export interface TestBreakdownItem {
+  passed: number
+  failed: number
+  total: number
+  success_rate: number | null
+  success: boolean | null
+}
+
+export interface TestBreakdown {
+  fail_to_pass: TestBreakdownItem
+  pass_to_pass: TestBreakdownItem
+  other?: TestBreakdownItem
+  overall: TestBreakdownItem
+}
+
 export interface BatchResult {
   id: number
   batch_id: number
@@ -314,6 +329,7 @@ export interface BatchResult {
   tests_passed: number
   tests_failed: number
   tests_total: number
+  test_breakdown?: TestBreakdown | null
   duration_seconds: number | null
   result_summary: Record<string, any> | null
   
@@ -366,6 +382,16 @@ export interface BatchStats {
   test_pass_rate: number | null
   avg_duration: number | null
   total_duration: number | null
+}
+
+export type DuccApiProvider = 'comate' | 'xinghe' | 'qianfan'
+
+export interface ModelProviderOption {
+  provider: DuccApiProvider
+  base_url?: string | null
+  model?: string | null
+  models: string[]
+  configured: boolean
 }
 
 export interface BatchCreateRequest {

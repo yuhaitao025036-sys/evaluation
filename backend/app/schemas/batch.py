@@ -146,8 +146,9 @@ class BatchResultResponse(BaseModel):
     tests_passed: int
     tests_failed: int
     tests_total: int
+    test_breakdown: Optional[Dict[str, Any]] = None
     duration_seconds: Optional[float]
-    
+
     result_summary: Optional[Dict[str, Any]]
     patch_path: Optional[str]
     output_dir: Optional[str]

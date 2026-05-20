@@ -16,6 +16,8 @@ import {
   Row,
   Col,
   Select,
+  Tabs,
+  Tooltip,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
@@ -30,6 +32,15 @@ import { batchesApi } from '@/api/batches'
 import type { Batch, BatchResult, BatchStats } from '@/types'
 
 const { Text, Title, Paragraph } = Typography
+
+const taskLogTabs = [
+  { key: 'generation_stdout', label: '生成 stdout' },
+  { key: 'generation_stderr', label: '生成 stderr' },
+  { key: 'evaluation_stdout', label: '评测 stdout' },
+  { key: 'evaluation_stderr', label: '评测 stderr' },
+  { key: 'git_apply', label: 'git apply' },
+  { key: 'ducc_execution', label: 'DUCC 执行' },
+]
 
 const statusMap: Record<string, { color: string; text: string }> = {
   created: { color: 'default', text: '已创建' },
@@ -59,6 +70,16 @@ function formatTime(value?: string | null) {
   return value ? new Date(value).toLocaleString('zh-CN') : '-'
 }
 
+function formatRate(value?: number | null) {
+  return value == null ? '-' : `${(value * 100).toFixed(1)}%`
+}
+
+function testOutcomeTag(success?: boolean | null) {
+  if (success === true) return <Tag color="success">通过</Tag>
+  if (success === false) return <Tag color="error">失败</Tag>
+  return <Tag>未知</Tag>
+}
+
 function statusTag(status?: string | null) {
   if (!status) return <Tag>-</Tag>
   const item = statusMap[status] || { color: 'default', text: status }
@@ -85,6 +106,12 @@ export default function BatchDetail() {
   const [artifactOpen, setArtifactOpen] = useState(false)
   const [artifactTitle, setArtifactTitle] = useState('')
   const [artifactContent, setArtifactContent] = useState('')
+  const [logDrawerOpen, setLogDrawerOpen] = useState(false)
+  const [logTask, setLogTask] = useState<BatchResult | null>(null)
+  const [activeLogName, setActiveLogName] = useState('generation_stdout')
+  const [logContents, setLogContents] = useState<Record<string, string>>({})
+  const [logErrors, setLogErrors] = useState<Record<string, string>>({})
+  const [logLoading, setLogLoading] = useState(false)
 
   const fetchAll = useCallback(async (silent = false) => {
     if (!batchId) return
@@ -218,6 +245,53 @@ export default function BatchDetail() {
     }
   }
 
+  const loadTaskLog = async (task: BatchResult, logName: string, force = false) => {
+    if (!force && (logContents[logName] || logErrors[logName])) return
+
+    setLogLoading(true)
+    try {
+      const data = await batchesApi.getTaskLogContent(batchId, task.instance_id, logName)
+      setLogContents(prev => ({ ...prev, [logName]: data.content || '暂无内容' }))
+    } catch (error: any) {
+      setLogErrors(prev => ({
+        ...prev,
+        [logName]: error.response?.data?.detail || '读取日志失败',
+      }))
+    } finally {
+      setLogLoading(false)
+    }
+  }
+
+  const openLogDrawer = (task: BatchResult) => {
+    const defaultLog = task.error_message?.includes('Docker evaluation returned None')
+      ? 'evaluation_stdout'
+      : 'generation_stdout'
+
+    setLogTask(task)
+    setActiveLogName(defaultLog)
+    setLogContents({})
+    setLogErrors({})
+    setLogDrawerOpen(true)
+    loadTaskLog(task, defaultLog, true)
+  }
+
+  const handleLogTabChange = (logName: string) => {
+    setActiveLogName(logName)
+    if (logTask) {
+      loadTaskLog(logTask, logName)
+    }
+  }
+
+  const renderLogContent = () => {
+    if (logLoading && !logContents[activeLogName] && !logErrors[activeLogName]) {
+      return <Text type="secondary">正在读取日志...</Text>
+    }
+    if (logErrors[activeLogName]) {
+      return <Text type="danger">{logErrors[activeLogName]}</Text>
+    }
+    return <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{logContents[activeLogName] || '暂无内容'}</pre>
+  }
+
   const columns: ColumnsType<BatchResult> = [
     {
       title: '实例 ID',
@@ -261,11 +335,29 @@ export default function BatchDetail() {
       },
     },
     {
-      title: '测试',
+      title: <Tooltip title="F2P：原本失败、需要被修复的测试；P2P：原本通过、需要保持通过的基准测试；其它：本次实际运行但不在 F2P/P2P 基准列表中的测试；整体：全部测试通过率">测试结果</Tooltip>,
       key: 'tests',
-      width: 140,
-      sorter: (a, b) => (a.tests_passed - a.tests_failed) - (b.tests_passed - b.tests_failed),
-      render: (_, record) => `${record.tests_passed}/${record.tests_failed}/${record.tests_total}`,
+      width: 260,
+      sorter: (a, b) => (a.tests_passed / Math.max(a.tests_total, 1)) - (b.tests_passed / Math.max(b.tests_total, 1)),
+      render: (_, record) => {
+        const breakdown = record.test_breakdown
+        if (!breakdown) {
+          return <Text type="secondary">整体 {record.tests_passed}/{record.tests_total}（{record.tests_total ? ((record.tests_passed / record.tests_total) * 100).toFixed(1) : '0.0'}%）</Text>
+        }
+
+        const f2p = breakdown.fail_to_pass
+        const p2p = breakdown.pass_to_pass
+        const other = breakdown.other
+        const overall = breakdown.overall
+        return (
+          <Space direction="vertical" size={2}>
+            <Text>F2P {f2p.passed}/{f2p.total}（{formatRate(f2p.success_rate)}）{testOutcomeTag(f2p.success)}</Text>
+            <Text>P2P {p2p.total ? `${p2p.passed}/${p2p.total}（${formatRate(p2p.success_rate)}）` : '无基准测试'}{testOutcomeTag(p2p.success)}</Text>
+            {other && other.total > 0 && <Text type="secondary">其它 {other.passed}/{other.total}（{formatRate(other.success_rate)}）</Text>}
+            <Text>整体 {overall.passed}/{overall.total}（{formatRate(overall.success_rate)}）{testOutcomeTag(overall.success)}</Text>
+          </Space>
+        )
+      },
     },
     {
       title: '耗时',
@@ -340,10 +432,7 @@ export default function BatchDetail() {
           </Button>
           <Button
             size="small"
-            onClick={() => showArtifact(
-              `${record.instance_id} generation stdout`,
-              async () => (await batchesApi.getTaskLogContent(batchId, record.instance_id, 'generation_stdout')).content,
-            )}
+            onClick={() => openLogDrawer(record)}
           >
             日志
           </Button>
@@ -497,6 +586,22 @@ export default function BatchDetail() {
         width="70%"
       >
         <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{artifactContent}</pre>
+      </Drawer>
+
+      <Drawer
+        title={logTask ? `${logTask.instance_id} 日志` : '任务日志'}
+        open={logDrawerOpen}
+        onClose={() => setLogDrawerOpen(false)}
+        width="75%"
+      >
+        <Tabs
+          activeKey={activeLogName}
+          onChange={handleLogTabChange}
+          items={taskLogTabs.map(tab => ({
+            ...tab,
+            children: renderLogContent(),
+          }))}
+        />
       </Drawer>
     </div>
   )

@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { Form, Input, Select, InputNumber, Button, Space, Divider, message } from 'antd'
 import { datasetsApi } from '@/api/datasets'
+import { modelsApi } from '@/api/models'
 import { scriptsApi } from '@/api/scripts'
-import type { Dataset, Script, BatchCreateRequest } from '@/types'
+import type { Dataset, Script, BatchCreateRequest, DuccApiProvider, ModelProviderOption } from '@/types'
 import InstanceSelector from './InstanceSelector'
 import ScriptParametersForm from './ScriptParametersForm'
 
@@ -16,17 +17,20 @@ export default function NewBatchForm({ onSubmit, loading, onCancel }: Props) {
   const [form] = Form.useForm()
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [scripts, setScripts] = useState<Script[]>([])
+  const [modelProviders, setModelProviders] = useState<ModelProviderOption[]>([])
   const [selectedDatasetId, setSelectedDatasetId] = useState<number | null>(null)
   const [selectedScript, setSelectedScript] = useState<Script | null>(null)
+  const [apiProvider, setApiProvider] = useState<DuccApiProvider>('comate')
 
   useEffect(() => {
     fetchData()
   }, [])
 
   const fetchData = async () => {
-    const [datasetsResult, scriptsResult] = await Promise.allSettled([
+    const [datasetsResult, scriptsResult, modelProvidersResult] = await Promise.allSettled([
       datasetsApi.list({ page: 1, page_size: 1000 }),
-      scriptsApi.list({ page: 1, page_size: 1000 })
+      scriptsApi.list({ page: 1, page_size: 1000 }),
+      modelsApi.providers()
     ])
 
     if (datasetsResult.status === 'fulfilled') {
@@ -45,9 +49,24 @@ export default function NewBatchForm({ onSubmit, loading, onCancel }: Props) {
       console.error('获取脚本失败:', scriptsResult.reason)
       message.error('获取脚本失败')
     }
+
+    if (modelProvidersResult.status === 'fulfilled') {
+      setModelProviders(modelProvidersResult.value)
+    } else {
+      console.error('获取模型来源失败:', modelProvidersResult.reason)
+      message.error('获取模型来源失败')
+    }
   }
 
   const handleSubmit = async (values: any) => {
+    const executionConfig = { ...(values.execution_config || {}) }
+    if (values.ducc_api_provider && values.ducc_api_provider !== 'comate') {
+      executionConfig['ducc-api-provider'] = values.ducc_api_provider
+      if (values.model) {
+        executionConfig['anthropic-model'] = values.model
+      }
+    }
+
     const data: BatchCreateRequest = {
       batch_name: values.batch_name,
       dataset_id: values.dataset_id,
@@ -57,7 +76,7 @@ export default function NewBatchForm({ onSubmit, loading, onCancel }: Props) {
       max_concurrency: values.max_concurrency || 10,
       max_retries: values.max_retries || 3,
       priority: values.priority || 0,
-      execution_config: values.execution_config || {},
+      execution_config: executionConfig,
       ...values.instance_selection,
       append_to_existing: false
     }
@@ -76,28 +95,18 @@ export default function NewBatchForm({ onSubmit, loading, onCancel }: Props) {
     form.setFieldsValue({ execution_config: defaults })
   }
 
-  // Ducc 支持的模型列表，可通过 ducc models 查看
-  const commonModels = [
-    'auto',
-    'Kimi-K2.6',
-    'MiniMax-M2.7',
-    'GLM-5',
-    'GLM-5.1',
-    'GLM-5-Turbo',
-    'gpt-5.5',
-    'gpt-5.4',
-    'gpt-5.3-codex',
-    'Claude Haiku 4.5',
-    'Claude Sonnet 4.5',
-    'Claude Sonnet 4.6',
-    'Claude Opus 4.5',
-    'Claude Opus 4.6',
-    'Kimi-K2.5',
-    'MiniMax-M2-Stable',
-    'MiniMax-M2.1',
-    'DeepSeek-V4-Flash',
-    'DeepSeek-V4-Pro'
-  ]
+  const selectedProvider = modelProviders.find(provider => provider.provider === apiProvider)
+  const providerModels = selectedProvider?.models?.length ? selectedProvider.models : ['auto']
+
+  const handleProviderChange = (value: DuccApiProvider) => {
+    setApiProvider(value)
+    const provider = modelProviders.find(item => item.provider === value)
+    if (provider?.model) {
+      form.setFieldValue('model', provider.model)
+    } else if (provider?.models?.[0]) {
+      form.setFieldValue('model', provider.models[0])
+    }
+  }
 
   return (
     <Form
@@ -105,6 +114,7 @@ export default function NewBatchForm({ onSubmit, loading, onCancel }: Props) {
       layout="vertical"
       onFinish={handleSubmit}
       initialValues={{
+        ducc_api_provider: 'comate',
         max_concurrency: 10,
         max_retries: 3,
         priority: 0
@@ -168,10 +178,25 @@ export default function NewBatchForm({ onSubmit, loading, onCancel }: Props) {
       )}
 
       <Form.Item
+        name="ducc_api_provider"
+        label="API 来源"
+        extra={apiProvider === 'comate'
+          ? '使用当前默认 Comate / DUCC 鉴权逻辑，不额外覆盖 base URL 和 token'
+          : `使用 data/config/model_providers.json 中的 ${apiProvider} 配置覆盖容器内 ducc 鉴权`
+        }
+      >
+        <Select onChange={handleProviderChange}>
+          <Select.Option value="comate">Comate / 默认 DUCC</Select.Option>
+          <Select.Option value="xinghe">星河</Select.Option>
+          <Select.Option value="qianfan">千帆</Select.Option>
+        </Select>
+      </Form.Item>
+
+      <Form.Item
         name="model"
         label="模型"
         rules={[{ required: true, message: '请输入模型名称' }]}
-        extra="当前模型列表来自 Ducc Agent，可通过 ducc models 查看；后续接入千帆等平台后，可在此选择对应平台支持的模型，用于结果对比"
+        extra="用于执行脚本和结果对比；选择星河/千帆时会作为容器内 ducc 的 ANTHROPIC_MODEL 覆盖值"
       >
         <Select
           placeholder="请选择模型名称"
@@ -179,7 +204,7 @@ export default function NewBatchForm({ onSubmit, loading, onCancel }: Props) {
           allowClear
           optionFilterProp="children"
         >
-          {commonModels.map(model => (
+          {providerModels.map(model => (
             <Select.Option key={model} value={model}>
               {model}
             </Select.Option>

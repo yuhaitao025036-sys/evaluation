@@ -10,6 +10,8 @@ docker-compose.yml
 backend/.env
 data/
 .env
+.pids
+logs
 
 # ========================================
 # Python

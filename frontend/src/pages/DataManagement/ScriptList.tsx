@@ -34,7 +34,7 @@ export default function ScriptList() {
     setScanning(true)
     try {
       const res = await scriptsApi.scan()
-      message.success(`扫描完成，新增 ${res.registered_count} 个脚本，更新 ${res.updated_count} 个脚本`)
+      message.success(`扫描完成，新增 ${res.registered_count} 个脚本，更新 ${res.updated_count} 个脚本，删除 ${res.deleted_count} 个失效脚本`)
       fetchData()
     } catch (error) {
       console.error('Failed to scan scripts:', error)

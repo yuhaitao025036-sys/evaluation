@@ -21,6 +21,59 @@ from app.services.scheduler_service import SchedulerService
 router = APIRouter()
 
 
+def _task_test_breakdown(task) -> Optional[Dict[str, Any]]:
+    if not task.validation_detail_path or not os.path.exists(task.validation_detail_path):
+        return None
+
+    try:
+        with open(task.validation_detail_path, 'r', encoding='utf-8') as f:
+            detail = json.load(f)
+    except Exception:
+        return None
+
+    fail_to_pass = {
+        'passed': detail.get('fail_to_pass_success_count', 0),
+        'failed': detail.get('fail_to_pass_failed_count', 0),
+        'total': detail.get('fail_to_pass_total_count', 0),
+        'success_rate': detail.get('fail_to_pass_success_rate'),
+        'success': detail.get('fail_to_pass_passed'),
+    }
+    pass_to_pass = {
+        'passed': detail.get('pass_to_pass_success_count', 0),
+        'failed': detail.get('pass_to_pass_failed_count', 0),
+        'total': detail.get('pass_to_pass_total_count', 0),
+        'success_rate': detail.get('pass_to_pass_success_rate'),
+        'success': detail.get('pass_to_pass_passed'),
+    }
+    overall = {
+        'passed': detail.get('total_tests_passed', task.tests_passed),
+        'failed': detail.get('total_tests_failed', task.tests_failed),
+        'total': detail.get('total_tests_run', task.tests_total),
+        'success_rate': detail.get('overall_test_pass_rate'),
+        'success': detail.get('overall'),
+    }
+    other = {
+        'passed': max(overall['passed'] - fail_to_pass['passed'] - pass_to_pass['passed'], 0),
+        'failed': max(overall['failed'] - fail_to_pass['failed'] - pass_to_pass['failed'], 0),
+        'total': max(overall['total'] - fail_to_pass['total'] - pass_to_pass['total'], 0),
+        'success': None,
+    }
+    other['success_rate'] = other['passed'] / other['total'] if other['total'] else None
+
+    return {
+        'fail_to_pass': fail_to_pass,
+        'pass_to_pass': pass_to_pass,
+        'other': other,
+        'overall': overall,
+    }
+
+
+def _batch_result_response(task) -> Dict[str, Any]:
+    data = {column.name: getattr(task, column.name) for column in task.__table__.columns}
+    data['test_breakdown'] = _task_test_breakdown(task)
+    return data
+
+
 @router.post("", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
 async def create_batch(
     batch_create: BatchCreate,
@@ -276,7 +329,7 @@ async def get_batch_tasks(
         skip=skip,
         limit=limit
     )
-    return tasks
+    return [_batch_result_response(task) for task in tasks]
 
 
 @router.get("/{batch_id}/tasks/{instance_id}", response_model=BatchResultResponse)
@@ -295,7 +348,7 @@ async def get_batch_task(
             detail=f"批次 {batch_id} 中不存在实例 {instance_id} 的任务"
         )
 
-    return task
+    return _batch_result_response(task)
 
 
 @router.post("/{batch_id}/tasks/{instance_id}/run", response_model=MessageResponse)
@@ -497,6 +550,7 @@ async def get_task_log_content(
         'generation_stderr': 'generation_stderr.log',
         'evaluation_stdout': 'evaluation_stdout.log',
         'evaluation_stderr': 'evaluation_stderr.log',
+        'git_apply': os.path.join('evaluation', 'git_apply.log'),
         'ducc_execution': 'ducc_execution.log',
     }
     if log_name not in allowed_logs:

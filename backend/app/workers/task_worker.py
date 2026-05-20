@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 # 数据库连接
+from app.config import settings
 from app.database import SessionLocal
 from app.models import BatchResult, Batch, Script, Dataset, DatasetInstance
 
@@ -237,7 +238,25 @@ def _execute_script(
             '--model', model,
             '--tag', tag
         ]
-        
+
+        execution_config = dict(execution_config)
+        provider = execution_config.pop('ducc-api-provider', 'comate') or 'comate'
+        provider_model = execution_config.pop('anthropic-model', None)
+        if provider != 'comate':
+            provider_config = _load_model_provider_config(provider)
+            provider_base_url = provider_config.get('base_url')
+            provider_token = provider_config.get('api_key')
+            provider_model = provider_model or provider_config.get('model') or model
+            if not provider_base_url:
+                return {'success': False, 'error': f"Provider {provider} missing base_url in model_providers.json"}
+            if not provider_token:
+                return {'success': False, 'error': f"Provider {provider} missing api_key in model_providers.json"}
+            cmd.extend([
+                '--anthropic-base-url', provider_base_url,
+                '--anthropic-auth-token', provider_token,
+                '--anthropic-model', provider_model,
+            ])
+
         # 添加自定义参数
         for key, value in execution_config.items():
             if value is None or value == '' or value is False:
@@ -253,8 +272,8 @@ def _execute_script(
             else:
                 cmd.append(arg_name)
                 cmd.append(str(value))
-        
-        print(f"Executing: {' '.join(cmd)}")
+
+        print(f"Executing: {' '.join(_redact_command(cmd))}")
         
         # 执行脚本
         process = subprocess.run(
@@ -285,6 +304,41 @@ def _execute_script(
             'success': False,
             'error': f"Script execution error: {str(e)}"
         }
+
+
+def _load_model_provider_config(provider: str) -> Dict[str, Any]:
+    config_path = os.getenv(
+        'DUCC_MODEL_PROVIDERS_CONFIG',
+        os.path.join(settings.DATA_DIR, 'config', 'model_providers.json'),
+    )
+    if provider not in {'xinghe', 'qianfan'}:
+        raise ValueError(f"Unsupported DUCC API provider: {provider}")
+    if not os.path.exists(config_path):
+        raise ValueError(f"Model provider config not found: {config_path}")
+
+    with open(config_path, 'r', encoding='utf-8') as f:
+        providers = json.load(f)
+
+    provider_config = providers.get(provider)
+    if not isinstance(provider_config, dict):
+        raise ValueError(f"Provider {provider} not found in model_providers.json")
+    return provider_config
+
+
+def _redact_command(cmd: list[str]) -> list[str]:
+    redacted = []
+    redact_next = False
+    for item in cmd:
+        if redact_next:
+            redacted.append('***REDACTED***')
+            redact_next = False
+            continue
+
+        redacted.append(item)
+        normalized = item.lower().lstrip('-')
+        if any(secret_word in normalized for secret_word in ('token', 'key', 'secret', 'password')):
+            redact_next = True
+    return redacted
 
 
 def _parse_task_summary(output_dir: str) -> Dict[str, Any]:

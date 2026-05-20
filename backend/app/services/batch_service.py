@@ -3,6 +3,7 @@ Batch Management Service for DUCC Evaluation System v2.0
 批次管理服务 - 核心业务逻辑
 """
 import os
+import re
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
@@ -479,9 +480,16 @@ class BatchService:
         if not script:
             raise ValueError(f"脚本 {script_id} 不存在")
 
+        reserved_config = self._extract_reserved_execution_config(user_config)
         argument_schema = script.argument_schema or []
         if not argument_schema:
-            return user_config
+            config = {
+                key: value
+                for key, value in user_config.items()
+                if self._normalize_execution_config_key(key) not in {'ducc-api-provider', 'anthropic-model'}
+            }
+            config.update(reserved_config)
+            return config
 
         allowed_names = {arg.get('name') for arg in argument_schema if arg.get('name')}
         config = {}
@@ -493,12 +501,37 @@ class BatchService:
                 config[name] = arg.get('default')
 
         for key, value in user_config.items():
-            normalized_key = key[2:] if key.startswith('--') else key
-            normalized_key = normalized_key.replace('_', '-')
+            normalized_key = self._normalize_execution_config_key(key)
             if normalized_key in allowed_names:
                 config[normalized_key] = value
 
+        config.update(reserved_config)
         return config
+
+    def _extract_reserved_execution_config(self, user_config: Dict[str, Any]) -> Dict[str, Any]:
+        reserved: Dict[str, Any] = {}
+        for key, value in user_config.items():
+            normalized_key = self._normalize_execution_config_key(key)
+            self._reject_secret_execution_config(normalized_key, value)
+
+            if normalized_key == 'ducc-api-provider':
+                if value not in ('comate', 'xinghe', 'qianfan'):
+                    raise ValueError(f"不支持的 API 来源: {value}")
+                if value != 'comate':
+                    reserved[normalized_key] = value
+            elif normalized_key == 'anthropic-model' and value:
+                reserved[normalized_key] = value
+        return reserved
+
+    def _normalize_execution_config_key(self, key: str) -> str:
+        normalized_key = key[2:] if key.startswith('--') else key
+        return normalized_key.replace('_', '-')
+
+    def _reject_secret_execution_config(self, key: str, value: Any):
+        if key in {'anthropic-auth-token', 'api-key', 'api_key', 'token'}:
+            raise ValueError("API token 不允许通过批次参数提交，请放到 data/config/model_providers.json")
+        if isinstance(value, str) and re.match(r'^(sk-|bce-v3/)', value):
+            raise ValueError("API token 不允许通过批次参数提交，请放到 data/config/model_providers.json")
 
     def _query_instances(
         self,
